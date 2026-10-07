@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="Machine.InvalidIp" xml:space="preserve">
+    <value>عنوان الـ IP بتاع الماكينة ناقص أو مش صح.</value>
+  </data>
+  <data name="Machine.InvalidPort" xml:space="preserve">
+    <value>البورت بتاع الماكينة ناقص أو مش صح.</value>
+  </data>
+  <data name="Machine.ConnectionFailed" xml:space="preserve">
+    <value>مقدرناش نتصل بالماكينة. اتأكد إنها شغالة وموصولة بالشبكة.</value>
+  </data>
+  <data name="Machine.Timeout" xml:space="preserve">
+    <value>الماكينة مردتش في الوقت المحدد.</value>
+  </data>
+  <data name="Machine.Rejected" xml:space="preserve">
+    <value>الماكينة رفضت العملية المطلوبة.</value>
+  </data>
+  <data name="Machine.NotReady" xml:space="preserve">
+    <value>الماكينة مش جاهزة تعمل العملية دي دلوقتي.</value>
+  </data>
+  <data name="Machine.UnexpectedResponse" xml:space="preserve">
+    <value>الماكينة ردت برد غير متوقع أو مش مفهوم.</value>
+  </data>
+  <data name="Machine.InternalError" xml:space="preserve">
+    <value>حصل خطأ داخلي في خدمة الطباعة.</value>
+  </data>
+  <data name="Machine.BranchScopeMismatch" xml:space="preserve">
+    <value>الفرع المطلوب مش مطابق لنطاق التوكن ده.</value>
+  </data>
+  <data name="Machine.CannotEject" xml:space="preserve">
+    <value>الماكينة مقدرتش تطلع الكارت.</value>
+  </data>
+  <data name="Machine.BackendRejected" xml:space="preserve">
+    <value>الـ Inventory API رفض طلب الطباعة ده.</value>
+  </data>
+  <data name="Machine.BackendUnavailable" xml:space="preserve">
+    <value>مقدرناش نوصل لـ Inventory API عشان نتأكد من الكارت أو نسجل نتيجة الطباعة.</value>
+  </data>
+  <data name="Machine.Unauthenticated" xml:space="preserve">
+    <value>لازم توكن صالح لجهاز الطباعة.</value>
+  </data>
+  <data name="Machine.Forbidden" xml:space="preserve">
+    <value>التوكن ده مش مسموح له يعمل العملية دي.</value>
+  </data>
+  <data name="Evolis.Timeout" xml:space="preserve">
+    <value>طابعة الإيفوليس مردتش في الوقت المحدد.</value>
+  </data>
+  <data name="Evolis.Busy" xml:space="preserve">
+    <value>طابعة الإيفوليس مشغولة دلوقتي.</value>
+  </data>
+  <data name="Evolis.CommunicationFailure" xml:space="preserve">
+    <value>مقدرناش نتصل بطابعة الإيفوليس. اتأكد إنها شغالة وموصولة.</value>
+  </data>
+  <data name="Evolis.CertificateError" xml:space="preserve">
+    <value>حصل خطأ في الشهادة وقت الاتصال بطابعة الإيفوليس.</value>
+  </data>
+  <data name="Evolis.NeedsAction" xml:space="preserve">
+    <value>طابعة الإيفوليس محتاجة تدخّل قبل ما تكمّل.</value>
+  </data>
+  <data name="Evolis.MechanicalFailure" xml:space="preserve">
+    <value>طابعة الإيفوليس فيها عطل ميكانيكي.</value>
+  </data>
+  <data name="Evolis.UnknownRibbon" xml:space="preserve">
+    <value>الشريط المحمّل في طابعة الإيفوليس غير معروف.</value>
+  </data>
+  <data name="Evolis.BlankTrack" xml:space="preserve">
+    <value>الشريط المغناطيسي للكارت فاضي.</value>
+  </data>
+  <data name="Evolis.MagneticError" xml:space="preserve">
+    <value>طابعة الإيفوليس مقدرتش تقرا أو تكتب الشريط المغناطيسي للكارت.</value>
+  </data>
+  <data name="Evolis.Forbidden" xml:space="preserve">
+    <value>مش مسموح تعمل العملية دي على طابعة الإيفوليس.</value>
+  </data>
+  <data name="Evolis.Cancelled" xml:space="preserve">
+    <value>تم إلغاء العملية.</value>
+  </data>
+  <data name="Evolis.InternalError" xml:space="preserve">
+    <value>حصل خطأ داخلي في Evolis adapter.</value>
+  </data>
+  <data name="Evolis.RibbonMismatch" xml:space="preserve">
+    <value>الشريط المحمّل مش هو الشريط المظبوط للمنتج ده.</value>
+  </data>
+  <data name="Evolis.RibbonCannotPrintColour" xml:space="preserve">
+    <value>الكارت ده محتاج شريط ألوان، والشريط المحمّل مايقدرش يطبع ألوان.</value>
+  </data>
+  <data name="Evolis.RibbonNotSelectable" xml:space="preserve">
+    <value>الشريط المظبوط للمنتج ده مايقدرش يتحدد للطباعة على الطابعة دي.</value>
+  </data>
+  <data name="Evolis.PrinterBusy" xml:space="preserve">
+    <value>طابعة الإيفوليس دي مشغولة بعملية طباعة تانية دلوقتي.</value>
+  </data>
+  <data name="Evolis.InvalidCardHolderName" xml:space="preserve">
+    <value>اسم حامل الكارت لازم يكون حروف إنجليزي وأرقام وعلامات ترقيم بسيطة بس.</value>
+  </data>
+</root>

@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="Machine.InvalidIp" xml:space="preserve">
+    <value>The supplied machine IP address is missing or invalid.</value>
+  </data>
+  <data name="Machine.InvalidPort" xml:space="preserve">
+    <value>The supplied machine port is missing or invalid.</value>
+  </data>
+  <data name="Machine.ConnectionFailed" xml:space="preserve">
+    <value>Failed to connect to the machine. Check that it is powered on and reachable on the network.</value>
+  </data>
+  <data name="Machine.Timeout" xml:space="preserve">
+    <value>The machine did not respond within the configured timeout.</value>
+  </data>
+  <data name="Machine.Rejected" xml:space="preserve">
+    <value>The machine rejected the requested operation.</value>
+  </data>
+  <data name="Machine.NotReady" xml:space="preserve">
+    <value>The machine is not ready to perform this operation.</value>
+  </data>
+  <data name="Machine.UnexpectedResponse" xml:space="preserve">
+    <value>The machine returned an unexpected or unreadable response.</value>
+  </data>
+  <data name="Machine.InternalError" xml:space="preserve">
+    <value>An internal error occurred in the printer agent service.</value>
+  </data>
+  <data name="Machine.BranchScopeMismatch" xml:space="preserve">
+    <value>The requested branch does not match this token's own scope.</value>
+  </data>
+  <data name="Machine.CannotEject" xml:space="preserve">
+    <value>The machine could not eject the card.</value>
+  </data>
+  <data name="Machine.BackendRejected" xml:space="preserve">
+    <value>The Inventory API rejected this print request.</value>
+  </data>
+  <data name="Machine.BackendUnavailable" xml:space="preserve">
+    <value>Could not reach the Inventory API to validate or record this print.</value>
+  </data>
+  <data name="Machine.Unauthenticated" xml:space="preserve">
+    <value>A valid Print Agent token is required.</value>
+  </data>
+  <data name="Machine.Forbidden" xml:space="preserve">
+    <value>This token is not permitted to perform this operation.</value>
+  </data>
+  <data name="Evolis.Timeout" xml:space="preserve">
+    <value>The Evolis printer did not respond within the configured timeout.</value>
+  </data>
+  <data name="Evolis.Busy" xml:space="preserve">
+    <value>The Evolis printer is busy.</value>
+  </data>
+  <data name="Evolis.CommunicationFailure" xml:space="preserve">
+    <value>Could not communicate with the Evolis printer. Check that it is powered on and reachable.</value>
+  </data>
+  <data name="Evolis.CertificateError" xml:space="preserve">
+    <value>A certificate error occurred communicating with the Evolis printer.</value>
+  </data>
+  <data name="Evolis.NeedsAction" xml:space="preserve">
+    <value>The Evolis printer needs attention before it can continue.</value>
+  </data>
+  <data name="Evolis.MechanicalFailure" xml:space="preserve">
+    <value>The Evolis printer reported a mechanical fault.</value>
+  </data>
+  <data name="Evolis.UnknownRibbon" xml:space="preserve">
+    <value>The Evolis printer's loaded ribbon is not recognized.</value>
+  </data>
+  <data name="Evolis.BlankTrack" xml:space="preserve">
+    <value>The card's magnetic track is blank.</value>
+  </data>
+  <data name="Evolis.MagneticError" xml:space="preserve">
+    <value>The Evolis printer could not read or write the card's magnetic track.</value>
+  </data>
+  <data name="Evolis.Forbidden" xml:space="preserve">
+    <value>Not authorized to perform this operation on the Evolis printer.</value>
+  </data>
+  <data name="Evolis.Cancelled" xml:space="preserve">
+    <value>The operation was cancelled.</value>
+  </data>
+  <data name="Evolis.InternalError" xml:space="preserve">
+    <value>An internal error occurred in the Evolis printer adapter.</value>
+  </data>
+  <data name="Evolis.RibbonMismatch" xml:space="preserve">
+    <value>The loaded ribbon does not match this product's configured ribbon.</value>
+  </data>
+  <data name="Evolis.RibbonCannotPrintColour" xml:space="preserve">
+    <value>This card requires a colour ribbon, but the loaded ribbon cannot print colour.</value>
+  </data>
+  <data name="Evolis.RibbonNotSelectable" xml:space="preserve">
+    <value>This product's configured ribbon cannot be selected for printing on this printer.</value>
+  </data>
+  <data name="Evolis.PrinterBusy" xml:space="preserve">
+    <value>This Evolis printer is already busy with another print job.</value>
+  </data>
+  <data name="Evolis.InvalidCardHolderName" xml:space="preserve">
+    <value>The cardholder name must contain only English letters, digits, and basic punctuation.</value>
+  </data>
+</root>

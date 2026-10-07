@@ -1,0 +1,618 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <!-- 
+    Microsoft ResX Schema 
+    
+    Version 2.0
+    
+    The primary goals of this format is to allow a simple XML format 
+    that is mostly human readable. The generation and parsing of the 
+    various data types are done through the TypeConverter classes 
+    associated with the data types.
+    
+    Example:
+    
+    ... ado.net/XML headers & schema ...
+    <resheader name="resmimetype">text/microsoft-resx</resheader>
+    <resheader name="version">2.0</resheader>
+    <resheader name="reader">System.Resources.ResXResourceReader, System.Windows.Forms, ...</resheader>
+    <resheader name="writer">System.Resources.ResXResourceWriter, System.Windows.Forms, ...</resheader>
+    <data name="Name1"><value>this is my long string</value><comment>this is a comment</comment></data>
+    <data name="Color1" type="System.Drawing.Color, System.Drawing">Blue</data>
+    <data name="Bitmap1" mimetype="application/x-microsoft.net.object.binary.base64">
+        <value>[base64 mime encoded serialized .NET Framework object]</value>
+    </data>
+    <data name="Icon1" type="System.Drawing.Icon, System.Drawing" mimetype="application/x-microsoft.net.object.bytearray.base64">
+        <value>[base64 mime encoded string representing a byte array form of the .NET Framework object]</value>
+        <comment>This is a comment</comment>
+    </data>
+                
+    There are any number of "resheader" rows that contain simple 
+    name/value pairs.
+    
+    Each data row contains a name, and value. The row also contains a 
+    type or mimetype. Type corresponds to a .NET class that support 
+    text/value conversion through the TypeConverter architecture. 
+    Classes that don't support this are serialized and stored with the 
+    mimetype set.
+    
+    The mimetype is used for serialized objects, and tells the 
+    ResXResourceReader how to depersist the object. This is currently not 
+    extensible. For a given mimetype the value must be set accordingly:
+    
+    Note - application/x-microsoft.net.object.binary.base64 is the format 
+    that the ResXResourceWriter will generate, however the reader can 
+    read any of the formats listed below.
+    
+    mimetype: application/x-microsoft.net.object.binary.base64
+    value   : The object must be serialized with 
+            : System.Runtime.Serialization.Formatters.Binary.BinaryFormatter
+            : and then encoded with base64 encoding.
+    
+    mimetype: application/x-microsoft.net.object.soap.base64
+    value   : The object must be serialized with 
+            : System.Runtime.Serialization.Formatters.Soap.SoapFormatter
+            : and then encoded with base64 encoding.
+
+    mimetype: application/x-microsoft.net.object.bytearray.base64
+    value   : The object must be serialized into a byte array 
+            : using a System.ComponentModel.TypeConverter
+            : and then encoded with base64 encoding.
+    -->
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="Auth.InvalidCredentials" xml:space="preserve">
+    <value>اسم المستخدم أو الباسورد غلط.</value>
+  </data>
+  <data name="Auth.InvalidRefreshToken" xml:space="preserve">
+    <value>التوكن مش صالح أو انتهت صلاحيته.</value>
+  </data>
+  <data name="Auth.PrintAgentTokenRequiresTenant" xml:space="preserve">
+    <value>توكن جهاز الطباعة بيتاخد للمستأجر بس، مينفعش للأدمن.</value>
+  </data>
+  <data name="Auth.PrintAgentBranchNotFound" xml:space="preserve">
+    <value>مفيش فرع بالرقم ده تابع للمستأجر ده.</value>
+  </data>
+  <data name="Auth.PrintAgentPrinterNotFound" xml:space="preserve">
+    <value>مفيش طابعة بالرقم ده في الفرع ده تابعة للمستأجر ده.</value>
+  </data>
+  <data name="Auth.ServiceCredentialInvalid" xml:space="preserve">
+    <value>بيانات الاعتماد الخاصة بالخدمة غير صحيحة.</value>
+  </data>
+  <data name="Auth.ServiceCredentialRevoked" xml:space="preserve">
+    <value>بيانات الاعتماد الخاصة بالخدمة دي اتلغت.</value>
+  </data>
+  <data name="Auth.ServiceAccountBranchNotFound" xml:space="preserve">
+    <value>مفيش فرع بالرقم ده تابع للمستأجر ده.</value>
+  </data>
+  <data name="Auth.ServiceAccountNotFound" xml:space="preserve">
+    <value>مفيش حساب خدمة بالرقم ده.</value>
+  </data>
+  <data name="Error.Unexpected" xml:space="preserve">
+    <value>حصل خطأ غير متوقع.</value>
+  </data>
+  <data name="Tenant.AlreadyDeleted" xml:space="preserve">
+    <value>المستخدم رقم {0} متمسوح بالفعل.</value>
+  </data>
+  <data name="Tenant.CodeAlreadyExists" xml:space="preserve">
+    <value>في مستخدم بالكود '{0}' موجود قبل كده.</value>
+  </data>
+  <data name="Tenant.NotFound" xml:space="preserve">
+    <value>مفيش مستخدم  بالرقم {0}.</value>
+  </data>
+  <data name="Tenant.UsernameAlreadyExists" xml:space="preserve">
+    <value>في مستخدم باسم المستخدم '{0}' موجود قبل كده.</value>
+  </data>
+  <data name="Batch.FileEmpty" xml:space="preserve">
+    <value>الملف اللي اترفع فاضي.</value>
+  </data>
+  <data name="Batch.DecryptionFailed" xml:space="preserve">
+    <value>مقدرناش نفك تشفير الملف. يمكن يكون تالف أو المفتاح غلط.</value>
+  </data>
+  <data name="Batch.DuplicateFile" xml:space="preserve">
+    <value>الملف ده اتترفع قبل كده بالظبط.</value>
+  </data>
+  <data name="Batch.ExpectedRowCountMismatch" xml:space="preserve">
+    <value>عدد الصفوف مش زي المتوقع: {0}.</value>
+  </data>
+  <data name="Batch.ProcessingFailed" xml:space="preserve">
+    <value>حصل خطأ غير متوقع أثناء معالجة الدفعة. ابعت الـ trace id لو هتبلغ عن المشكلة.</value>
+  </data>
+  <data name="Batch.Report.ColumnMaskedPan" xml:space="preserve">
+    <value>رقم الكارت (مخفي)</value>
+  </data>
+  <data name="Batch.Report.ColumnFailureReason" xml:space="preserve">
+    <value>سبب الرفض</value>
+  </data>
+  <data name="Batch.FailureReason.MalformedLine" xml:space="preserve">
+    <value>الصف مش مكتوب صح (عدد حقول غلط، أو في حقل مطلوب فاضي).</value>
+  </data>
+  <data name="Batch.FailureReason.InvalidPan" xml:space="preserve">
+    <value>رقم الكارت غلط (مش أرقام، أو طوله غلط، أو فشل في التحقق).</value>
+  </data>
+  <data name="Batch.FailureReason.DuplicatePanInFile" xml:space="preserve">
+    <value>رقم الكارت ده مكرر في نفس الملف؛ اتعالجت أول مرة بس.</value>
+  </data>
+  <data name="Batch.FailureReason.UnknownProduct" xml:space="preserve">
+    <value>المنتج المكتوب في الصف ده مش موجود عند المستخدم ده.</value>
+  </data>
+  <data name="Batch.FailureReason.UnknownBranch" xml:space="preserve">
+    <value>الفرع المكتوب في الصف ده مش موجود عند المستخدم ده.</value>
+  </data>
+  <data name="Batch.ActorNotResolved" xml:space="preserve">
+    <value>مقدرناش نتعرف على المستخدم اللي بينفذ الطلب ده.</value>
+  </data>
+  <data name="Batch.InvalidFileExtension" xml:space="preserve">
+    <value>مش مقبول غير ملفات بامتداد dat. بس.</value>
+  </data>
+  <data name="Batch.FileMissing" xml:space="preserve">
+    <value>مفيش ملف اتبعت، أو الملف فاضي.</value>
+  </data>
+  <data name="Batch.EncryptionFailed" xml:space="preserve">
+    <value>مقدرناش نشفر ملف الكروت. ابعتلنا رقم التتبع لما تبلغ عن المشكلة.</value>
+  </data>
+  <data name="CardFile.ActorNotResolved" xml:space="preserve">
+    <value>مقدرناش نتعرف على المستخدم اللي بينفذ الطلب ده.</value>
+  </data>
+  <data name="CardFile.TenantUnavailable" xml:space="preserve">
+    <value>الجهة رقم {0} موقوفة أو محذوفة، ومش هينفع نطلعلها ملف كروت.</value>
+  </data>
+  <data name="CardFile.NoCards" xml:space="preserve">
+    <value>لازم تبعت كارت واحد على الأقل.</value>
+  </data>
+  <data name="CardFile.TooManyCards" xml:space="preserve">
+    <value>ملف الكروت مينفعش يزيد عن {0} كارت.</value>
+  </data>
+  <data name="CardFile.CardsRejected" xml:space="preserve">
+    <value>فيه {0} كارت معدوش التحقق، وماتعملش أي ملف.</value>
+  </data>
+  <data name="CardFile.GenerationFailed" xml:space="preserve">
+    <value>حصل خطأ مش متوقع وإحنا بنعمل ملف الكروت. ابعتلنا رقم التتبع لما تبلغ عن المشكلة.</value>
+  </data>
+  <data name="Batch.FailureReason.CardInTransit" xml:space="preserve">
+    <value>الكارت ده لسه في الطريق أو مش متسلم لفرع، فمينفعش الملف يعدله.</value>
+  </data>
+  <data name="Batch.FailureReason.CardDisposed" xml:space="preserve">
+    <value>الكارت ده اتعدم وخلاص، مينفعش يتعدل تاني.</value>
+  </data>
+  <data name="Batch.Report.ColumnRowNumber" xml:space="preserve">
+    <value>رقم السطر</value>
+  </data>
+  <data name="ProductItem.InTransit" xml:space="preserve">
+    <value>الكارت رقم {0} لسه في الطريق أو مش متسلم لفرع، ومينفعش يتعدل غير لما التحويل يخلص.</value>
+  </data>
+  <data name="ProductItem.Disposed" xml:space="preserve">
+    <value>الكارت رقم {0} اتعدم، ومينفعش يتعدل تاني.</value>
+  </data>
+  <data name="ProductItem.DisposeNotAllowedHere" xml:space="preserve">
+    <value>مينفعش تعدم الكروت من إندبوينت تغيير الحالة. استخدم إندبوينت الإعدام، وهو محتاج سبب والفرع اللي بيعدم.</value>
+  </data>
+  <data name="ProductItem.InvalidPan" xml:space="preserve">
+    <value>رقم الكارت اللي جه مش صح.</value>
+  </data>
+  <data name="ProductItem.NotFoundForPrint" xml:space="preserve">
+    <value>مفيش كارت قابل للطباعة مطابق لرقم الكارت ده للمنتج والفرع دول.</value>
+  </data>
+  <data name="ProductItem.PrintFlowScopeMismatch" xml:space="preserve">
+    <value>الفرع المطلوب مش مطابق لنطاق التوكن ده.</value>
+  </data>
+  <data name="Product.TransactionWayImmutable" xml:space="preserve">
+    <value>مينفعش تغير طريقة تحويل المنتج رقم {0} لأن فيه كروت متسجلة عليه بالفعل.</value>
+  </data>
+  <data name="Transfer.NotFound" xml:space="preserve">
+    <value>مفيش تحويل بالرقم {0}.</value>
+  </data>
+  <data name="Transfer.SystemAdminNotAllowed" xml:space="preserve">
+    <value>مدير النظام مش من حقه يعمل تحويلات ولا يقفلها.</value>
+  </data>
+  <data name="Transfer.SameSourceAndTarget" xml:space="preserve">
+    <value>الفرع المرسل والفرع المستقبل لازم يكونوا مختلفين.</value>
+  </data>
+  <data name="Transfer.BranchNotFound" xml:space="preserve">
+    <value>مفيش فرع بالرقم {0}.</value>
+  </data>
+  <data name="Transfer.BranchDeleted" xml:space="preserve">
+    <value>الفرع رقم {0} متمسوح ومينفعش يدخل في تحويل.</value>
+  </data>
+  <data name="Transfer.TargetBranchInactive" xml:space="preserve">
+    <value>الفرع رقم {0} موقوف ومينفعش يستلم رصيد.</value>
+  </data>
+  <data name="Transfer.NoItems" xml:space="preserve">
+    <value>التحويل لازم يكون فيه منتج واحد على الأقل.</value>
+  </data>
+  <data name="Transfer.DuplicateProduct" xml:space="preserve">
+    <value>المنتج رقم {0} متكرر أكتر من مرة. اجمع الكميات في سطر واحد.</value>
+  </data>
+  <data name="Transfer.InvalidQuantity" xml:space="preserve">
+    <value>كمية المنتج رقم {0} لازم تكون أكبر من صفر.</value>
+  </data>
+  <data name="Transfer.ProductNotFound" xml:space="preserve">
+    <value>مفيش منتج بالرقم {0}.</value>
+  </data>
+  <data name="Transfer.TooManyItems" xml:space="preserve">
+    <value>التحويل الواحد ميقدرش ينقل أكتر من {0} كارت.</value>
+  </data>
+  <data name="Transfer.ItemIdsRequired" xml:space="preserve">
+    <value>المنتج رقم {0} بيتتبع كارت كارت، فلازم تحدد الكروت اللي هتتحول بالظبط.</value>
+  </data>
+  <data name="Transfer.ItemCountMismatch" xml:space="preserve">
+    <value>عدد الكروت اللي حددتها للمنتج رقم {0} مش مطابق للكمية.</value>
+  </data>
+  <data name="Transfer.ItemIdsNotAllowedForUnknown" xml:space="preserve">
+    <value>المنتج رقم {0} مش بيتتبع كارت كارت، فمينفعش تختار كروت بعينها ليه.</value>
+  </data>
+  <data name="Transfer.DuplicateItem" xml:space="preserve">
+    <value>الكارت رقم {0} متكرر أكتر من مرة.</value>
+  </data>
+  <data name="Transfer.ItemNotFound" xml:space="preserve">
+    <value>مفيش كارت بالرقم {0}.</value>
+  </data>
+  <data name="Transfer.ItemNotAtSourceBranch" xml:space="preserve">
+    <value>الكارت {0} مش موجود في الفرع المرسل.</value>
+  </data>
+  <data name="Transfer.ItemProductMismatch" xml:space="preserve">
+    <value>الكارت {0} مش تابع للمنتج اللي محطوط تحته.</value>
+  </data>
+  <data name="Transfer.ItemNotAvailable" xml:space="preserve">
+    <value>الكارت {0} مش متاح للتحويل.</value>
+  </data>
+  <data name="Transfer.NotInProgress" xml:space="preserve">
+    <value>التحويل رقم {0} اتقفل خلاص.</value>
+  </data>
+  <data name="Transfer.ConcurrencyConflict" xml:space="preserve">
+    <value>التحويل ده اتعدل من عملية تانية. اعمل تحديث وجرب تاني.</value>
+  </data>
+  <data name="Transfer.UnknownProductInSettlement" xml:space="preserve">
+    <value>المنتج رقم {0} مش ضمن التحويل ده.</value>
+  </data>
+  <data name="Transfer.MissingProductInSettlement" xml:space="preserve">
+    <value>المنتج رقم {0} ضمن التحويل ده ولازم تحدد اتعمل فيه إيه بالظبط.</value>
+  </data>
+  <data name="Transfer.SettlementQuantityOutOfRange" xml:space="preserve">
+    <value>الكميات اللي اتستلمت واللي اتعدمت للمنتج رقم {0} مش متظبطة مع الكمية اللي اتبعتت.</value>
+  </data>
+  <data name="Transfer.DispositionsRequired" xml:space="preserve">
+    <value>المنتج رقم {0} بيتتبع كارت كارت، فلازم تحدد مصير كل كارت لوحده.</value>
+  </data>
+  <data name="Transfer.DispositionCountMismatch" xml:space="preserve">
+    <value>مصاير الكروت للمنتج رقم {0} مش مطابقة لكميات الاستلام والإعدام.</value>
+  </data>
+  <data name="Transfer.DispositionItemNotInTransfer" xml:space="preserve">
+    <value>الكارت رقم {0} مش ضمن التحويل ده.</value>
+  </data>
+  <data name="Transfer.PendingDispositionNotAllowed" xml:space="preserve">
+    <value>الكارت رقم {0} لازم تحدد إما اتستلم أو رجع أو اتعدم.</value>
+  </data>
+  <data name="Transfer.ReturnBranchUnavailable" xml:space="preserve">
+    <value>الفرع رقم {0} مش متاح، فمينفعش نرجعله الكروت الباقية.</value>
+  </data>
+  <data name="Transfer.StockInconsistency" xml:space="preserve">
+    <value>رصيد الفرع/المنتج {0} مش مطابق للكروت المسجلة. التحويل ماتمش.</value>
+  </data>
+  <data name="Disposal.ReasonRequired" xml:space="preserve">
+    <value>لازم تكتب سبب علشان تعدم الكروت.</value>
+  </data>
+  <data name="Disposal.ReasonTooLong" xml:space="preserve">
+    <value>سبب الإعدام مينفعش يزيد عن {0} حرف.</value>
+  </data>
+  <data name="Disposal.SystemAdminNotAllowed" xml:space="preserve">
+    <value>مدير النظام مش من حقه يعدم كروت.</value>
+  </data>
+  <data name="Disposal.BranchNotFound" xml:space="preserve">
+    <value>مفيش فرع بالرقم {0}.</value>
+  </data>
+  <data name="Disposal.BranchDeleted" xml:space="preserve">
+    <value>الفرع رقم {0} متمسوح ومينفعش يعدم كروت.</value>
+  </data>
+  <data name="Disposal.BranchNotPartyToTransfer" xml:space="preserve">
+    <value>الفرع رقم {0} مش طرف في التحويل ده ومينفعش يعدم كروته.</value>
+  </data>
+  <data name="Disposal.NothingToDispose" xml:space="preserve">
+    <value>لازم تحدد كارت واحد على الأقل علشان يتعدم.</value>
+  </data>
+  <data name="Disposal.SelectionAmbiguous" xml:space="preserve">
+    <value>حدد إما الكروت بعينها أو الكميات لكل منتج، مش الاتنين مع بعض.</value>
+  </data>
+  <data name="Disposal.AlreadyDisposed" xml:space="preserve">
+    <value>الكارت {0} اتعدم قبل كده.</value>
+  </data>
+  <data name="Disposal.NotDisposable" xml:space="preserve">
+    <value>الكارت {0} اتسلم للعميل وخلاص، مينفعش يتعدم.</value>
+  </data>
+  <data name="Disposal.CardNotAtBranch" xml:space="preserve">
+    <value>الكارت {0} مش موجود في الفرع اللي بيعمل الإعدام ده.</value>
+  </data>
+  <data name="Disposal.CardInTransfer" xml:space="preserve">
+    <value>الكارت {0} ضمن تحويل شغال، ولازم يتعدم وقت ما التحويل ده يتقفل.</value>
+  </data>
+  <data name="Disposal.InsufficientAvailable" xml:space="preserve">
+    <value>الفرع/المنتج {0} مفيهوش كروت متاحة كفاية علشان تتعدم.</value>
+  </data>
+  <data name="Disposal.InvalidQuantity" xml:space="preserve">
+    <value>كمية الإعدام للمنتج رقم {0} لازم تكون أكبر من صفر.</value>
+  </data>
+  <data name="Disposal.DuplicateProduct" xml:space="preserve">
+    <value>المنتج رقم {0} متكرر أكتر من مرة. اجمع الكميات في سطر واحد.</value>
+  </data>
+  <data name="Transfer.ActorNotResolved" xml:space="preserve">
+    <value>معرفناش مين اللي بيستخدم النظام دلوقتي.</value>
+  </data>
+  <data name="Transfer.DisposingBranchRequired" xml:space="preserve">
+    <value>لازم تحدد الفرع اللي عامل الإعدام لو في كمية هتتعدم.</value>
+  </data>
+  <data name="Transfer.PersistenceConflict" xml:space="preserve">
+    <value>التحويل ماتحفظش بسبب تعارض في التعديلات. جرب تاني.</value>
+  </data>
+  <data name="Transfer.ActionNotesTooLong" xml:space="preserve">
+    <value>الملاحظة مينفعش تزيد عن {0} حرف.</value>
+  </data>
+  <data name="Transfer.DifferenceActionRequired" xml:space="preserve">
+    <value>المنتج {0} ماوصلش بالكامل، لازم تحدد هيتعمل ايه في الفرق.</value>
+  </data>
+  <data name="Transfer.DifferenceActionNotApplicable" xml:space="preserve">
+    <value>المنتج {0} مفيهوش فرق متبقي، أو بيتتبع بالكارت، فمفيش داعي تحدد هيتعمل ايه في الفرق.</value>
+  </data>
+  <data name="Transfer.InvalidDifferenceAction" xml:space="preserve">
+    <value>القيمة اللي اتبعتت لحل الفرق بتاع المنتج {0} مش متعرفة.</value>
+  </data>
+  <data name="Transfer.DisposalNotAllowedForUnknown" xml:space="preserve">
+    <value>المنتج {0} مش متتبع بالكارت، فمينفعش يتعدم. سوّي الفرق باستخدام قرار حل الفرق بدل كده.</value>
+  </data>
+  <data name="Disposal.ActorNotResolved" xml:space="preserve">
+    <value>معرفناش مين اللي بيستخدم النظام دلوقتي.</value>
+  </data>
+  <data name="Disposal.DuplicateItem" xml:space="preserve">
+    <value>الكارت رقم {0} متكرر أكتر من مرة.</value>
+  </data>
+  <data name="Disposal.NotFound" xml:space="preserve">
+    <value>مفيش عملية إعدام بالرقم {0}.</value>
+  </data>
+  <data name="Disposal.CardNotFound" xml:space="preserve">
+    <value>مفيش كارت بالرقم {0}.</value>
+  </data>
+  <data name="Disposal.PersistenceConflict" xml:space="preserve">
+    <value>عملية الإعدام ماتحفظتش بسبب تعارض في التعديلات. جرب تاني.</value>
+  </data>
+  <data name="Branch.HasStock" xml:space="preserve">
+    <value>الفرع رقم {0} لسه فيه رصيد، مينفعش يتمسح. حوّل الرصيد أو اعدمه الأول.</value>
+  </data>
+  <data name="Branch.HasInProgressTransfer" xml:space="preserve">
+    <value>الفرع رقم {0} ليه تحويل شغال، مينفعش يتمسح غير لما يتقفل.</value>
+  </data>
+  <data name="BranchRequest.ActorNotResolved" xml:space="preserve">
+    <value>معرفناش مين اللي بيستخدم النظام دلوقتي.</value>
+  </data>
+  <data name="BranchRequest.SystemAdminNotAllowed" xml:space="preserve">
+    <value>مدير النظام مش من حقه ينشئ أو يأكد أو يرفض أو يلغي طلبات التوريد.</value>
+  </data>
+  <data name="BranchRequest.NotFound" xml:space="preserve">
+    <value>مفيش طلب توريد بالرقم {0}.</value>
+  </data>
+  <data name="BranchRequest.NoItems" xml:space="preserve">
+    <value>طلب التوريد لازم يكون فيه منتج واحد على الأقل.</value>
+  </data>
+  <data name="BranchRequest.InvalidQuantity" xml:space="preserve">
+    <value>الكمية المطلوبة للمنتج رقم {0} لازم تكون أكبر من صفر.</value>
+  </data>
+  <data name="BranchRequest.DuplicateProduct" xml:space="preserve">
+    <value>المنتج رقم {0} متكرر أكتر من مرة. اجمع الكميات في سطر واحد.</value>
+  </data>
+  <data name="BranchRequest.ActionNotesTooLong" xml:space="preserve">
+    <value>الملاحظة مينفعش تزيد عن {0} حرف.</value>
+  </data>
+  <data name="BranchRequest.BranchNotFound" xml:space="preserve">
+    <value>مفيش فرع بالرقم {0}.</value>
+  </data>
+  <data name="BranchRequest.BranchDeleted" xml:space="preserve">
+    <value>الفرع رقم {0} متمسوح ومينفعش يدخل في طلب توريد.</value>
+  </data>
+  <data name="BranchRequest.BranchInactive" xml:space="preserve">
+    <value>الفرع رقم {0} موقوف ومينفعش يطلب رصيد.</value>
+  </data>
+  <data name="BranchRequest.ProductNotFound" xml:space="preserve">
+    <value>مفيش منتج بالرقم {0}.</value>
+  </data>
+  <data name="BranchRequest.DuplicateOpenRequest" xml:space="preserve">
+    <value>المنتج رقم {0} ليه طلب توريد مفتوح من الفرع ده خلاص.</value>
+  </data>
+  <data name="BranchRequest.NoTransfers" xml:space="preserve">
+    <value>التأكيد لازم يكون فيه خطة تحويل واحدة على الأقل.</value>
+  </data>
+  <data name="BranchRequest.NotOpenForConfirmation" xml:space="preserve">
+    <value>طلب التوريد رقم {0} مش متاح للتأكيد.</value>
+  </data>
+  <data name="BranchRequest.SourceIsRequestingBranch" xml:space="preserve">
+    <value>الفرع رقم {0} هو الفرع الطالب، مينفعش يكون كمان مصدر تحويل بيلبي نفس الطلب.</value>
+  </data>
+  <data name="BranchRequest.NotOpenForClosure" xml:space="preserve">
+    <value>طلب التوريد رقم {0} مش متاح للرفض أو الإلغاء.</value>
+  </data>
+  <data name="BranchRequest.ConcurrencyConflict" xml:space="preserve">
+    <value>طلب التوريد ده اتعدل من عملية تانية. اعمل تحديث وجرب تاني.</value>
+  </data>
+  <data name="BranchRequest.PersistenceConflict" xml:space="preserve">
+    <value>طلب التوريد ماتحفظش بسبب تعارض في التعديلات. جرب تاني.</value>
+  </data>
+  <data name="Branch.HasOpenRequest" xml:space="preserve">
+    <value>الفرع رقم {0} ليه طلبات توريد مفتوحة، ومينفعش يتمسح غير لما تتقفل أو تكتمل.</value>
+  </data>
+  <data name="Product.HasOpenRequest" xml:space="preserve">
+    <value>المنتج رقم {0} ضمن بنود طلب توريد مفتوح، ومينفعش يتمسح.</value>
+  </data>
+  <data name="Printer.ActorNotResolved" xml:space="preserve">
+    <value>معرفناش مين اللي بيستخدم النظام دلوقتي.</value>
+  </data>
+  <data name="Printer.OnlySystemAdmin" xml:space="preserve">
+    <value>الأدمن بس اللي يقدر يضيف أو يعدّل أو يمسح أو يرجّع الطابعات.</value>
+  </data>
+  <data name="Printer.NotFound" xml:space="preserve">
+    <value>مفيش طابعة بالرقم {0}.</value>
+  </data>
+  <data name="Printer.TenantRequired" xml:space="preserve">
+    <value>لازم تحدد رقم العميل لما تسجّل طابعة كأدمن.</value>
+  </data>
+  <data name="Printer.TargetTenantNotFound" xml:space="preserve">
+    <value>مفيش عميل بالرقم {0}.</value>
+  </data>
+  <data name="Printer.BranchNotFound" xml:space="preserve">
+    <value>مفيش فرع بالرقم {0}.</value>
+  </data>
+  <data name="Printer.BranchDeleted" xml:space="preserve">
+    <value>الفرع رقم {0} متمسوح، ومينفعش تسجّل عليه طابعة.</value>
+  </data>
+  <data name="Printer.DuplicateUniqueNumber" xml:space="preserve">
+    <value>فيه طابعة تانية مسجلة بالسيريال/الآي بي '{0}' للعميل ده.</value>
+  </data>
+  <data name="Printer.AlreadyDeleted" xml:space="preserve">
+    <value>الطابعة رقم {0} اتمسحت خالص.</value>
+  </data>
+  <data name="Printer.NotDeleted" xml:space="preserve">
+    <value>الطابعة رقم {0} مش متمسوحة أصلًا.</value>
+  </data>
+  <data name="Printer.MaticaConfigRequired" xml:space="preserve">
+    <value>طابعة الماتيكا محتاجة إعدادات الجهاز (الفيدر والهوبر وسلة الرفض والبورت).</value>
+  </data>
+  <data name="Printer.MaticaConfigNotApplicable" xml:space="preserve">
+    <value>طابعة الإيفوليس مش محتاجة إعدادات ماتيكا.</value>
+  </data>
+  <data name="ProductPrintConfig.NotFound" xml:space="preserve">
+    <value>المنتج رقم {0} ماله إعدادات طباعة.</value>
+  </data>
+  <data name="ProductPrintConfig.OnlySystemAdmin" xml:space="preserve">
+    <value>الأدمن بس اللي يقدر ينشئ أو يعدّل إعدادات طباعة المنتج.</value>
+  </data>
+  <data name="ProductPrintConfig.ActorNotResolved" xml:space="preserve">
+    <value>معرفناش مين اللي بيستخدم النظام دلوقتي.</value>
+  </data>
+  <data name="ProductPrintConfig.MaticaPayloadRequired" xml:space="preserve">
+    <value>لازم تبعت إعدادات طباعة ماتيكا لما نوع الطابعة يكون ماتيكا.</value>
+  </data>
+  <data name="ProductPrintConfig.MaticaPayloadNotApplicable" xml:space="preserve">
+    <value>إعدادات طباعة ماتيكا مش مناسبة لما نوع الطابعة يكون إيفوليس.</value>
+  </data>
+  <data name="ProductPrintConfig.EvolisPayloadRequired" xml:space="preserve">
+    <value>لازم تبعت إعدادات طباعة إيفوليس لما نوع الطابعة يكون إيفوليس.</value>
+  </data>
+  <data name="ProductPrintConfig.EvolisPayloadNotApplicable" xml:space="preserve">
+    <value>إعدادات طباعة إيفوليس مش مناسبة لما نوع الطابعة يكون ماتيكا.</value>
+  </data>
+  <data name="ProductPrintConfig.RibbonTypeNotFound" xml:space="preserve">
+    <value>مفيش نوع ريبون بالرقم {0}.</value>
+  </data>
+  <data name="ProductPrintConfig.InvalidHexColor" xml:space="preserve">
+    <value>'{0}' مش لون HEX صحيح. استخدم الصيغة #RRGGBB أو #RRGGBBAA.</value>
+  </data>
+  <data name="ProductPrintConfig.ImageNotFound" xml:space="preserve">
+    <value>مفيش صورة طباعة بالرقم {0}.</value>
+  </data>
+  <data name="PrintImage.OnlySystemAdmin" xml:space="preserve">
+    <value>الأدمن بس اللي يقدر يرفع أو يستبدل أو يهجّر صور الطباعة.</value>
+  </data>
+  <data name="PrintImage.TenantRequired" xml:space="preserve">
+    <value>لازم تحدد رقم العميل لما ترفع صورة طباعة كأدمن.</value>
+  </data>
+  <data name="PrintImage.TargetTenantNotFound" xml:space="preserve">
+    <value>مفيش عميل بالرقم {0}.</value>
+  </data>
+  <data name="PrintImage.NotFound" xml:space="preserve">
+    <value>مفيش صورة طباعة بالرقم {0}.</value>
+  </data>
+  <data name="PrintImage.FileMissing" xml:space="preserve">
+    <value>مفيش صورة اتبعتت.</value>
+  </data>
+  <data name="PrintImage.FileTooLarge" xml:space="preserve">
+    <value>الصورة أكبر من الحد المسموح وهو {0} بايت.</value>
+  </data>
+  <data name="PrintImage.InvalidExtension" xml:space="preserve">
+    <value>نوع ملف الصورة ده مش مدعوم.</value>
+  </data>
+  <data name="PrintImage.UnsupportedContent" xml:space="preserve">
+    <value>محتوى الملف اللي اتبعت مش متطابق مع صيغة صورة مدعومة.</value>
+  </data>
+  <data name="PrintImage.InvalidFileName" xml:space="preserve">
+    <value>اسم الملف ده مينفعش يتستخدم. غيّر اسم الملف وجرب تاني.</value>
+  </data>
+  <data name="PrintImage.NameConflict" xml:space="preserve">
+    <value>فيه صورة تانية اسمها '{0}' موجودة بالفعل للعميل ده.</value>
+  </data>
+  <data name="PrintImage.SaveFailed" xml:space="preserve">
+    <value>معرفناش نحفظ الصورة. جرب تاني.</value>
+  </data>
+  <data name="Printer.EvolisConfigNotApplicable" xml:space="preserve">
+    <value>الطابعة دي ماتيكا وميقبلش إعدادات إيفوليس.</value>
+  </data>
+  <data name="Printer.EvolisConfigRequired" xml:space="preserve">
+    <value>طابعة الإيفوليس محتاجة إعداداتها (اسم الجهاز).</value>
+  </data>
+  <data name="Printer.DeviceNameRequired" xml:space="preserve">
+    <value>اسم الجهاز مطلوب وميزدش عن 200 حرف.</value>
+  </data>
+  <data name="Printer.DefaultRibbonTypeNotFound" xml:space="preserve">
+    <value>مفيش نوع شريط بالرقم {0}.</value>
+  </data>
+  <data name="Printer.DuplicateDeviceNameOnHost" xml:space="preserve">
+    <value>الجهاز '{0}' متسجل بالفعل على السيرفر '{1}'.</value>
+  </data>
+  <data name="Printer.SupervisorBranchMismatch" xml:space="preserve">
+    <value>الفرع المطلوب ميطابقش فرع حساب الخدمة المسجل بيه.</value>
+  </data>
+  <data name="Printer.SupervisorHostNameRequired" xml:space="preserve">
+    <value>اسم الجهاز (Host) مطلوب.</value>
+  </data>
+</root>

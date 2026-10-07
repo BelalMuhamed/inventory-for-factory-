@@ -1,0 +1,588 @@
+From 1f7562d0f7121c290b9d98d36a7745d3f743cea1 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Tue, 25 Aug 2026 07:22:33 +0000
+Subject: [PATCH] Phase 4+5: configurable reconciliation schedule, AES-GCM file
+ encryption for Logs and Outbox
+
+Item 4 (Option A, as specified):
+- Options/ServiceOptions.cs: OutboxOptions.ReconciliationIntervalMinutes
+  (int, default 30, matching the value this was hardcoded to before -
+  confirmed by re-reading the actual current Program.cs before touching
+  it, which had been hand-edited to 3 for testing since the last time
+  this file was reviewed).
+- Program.cs: fail-fast validation (> 0), Cron.MinuteInterval(n) now
+  reads the configured value instead of a literal.
+
+Item 5 (fix properly, AES-GCM, as specified):
+
+New Security/FileEncryptionService.cs: IFileEncryptionService (plain
+string-in, string-out contract - deliberately no opinion about whether
+a caller's unit of encryption is one log line or one whole file, since
+Logger and Outbox need different chunking but the same primitive) plus
+AesGcmFileEncryptionService, AES-256-GCM, format
+"v1.{base64 nonce}.{base64 tag}.{base64 ciphertext}" - versioned,
+dot-delimited, every field independently base64-encoded rather than
+undocumented byte offsets. A fresh RandomNumberGenerator-sourced 12-byte
+nonce on every single Encrypt call - this is the actual defect being
+fixed, not just the algorithm: the previous TripleDES implementation
+used a fixed all-zero IV, confirmed directly against real log files
+where identical ciphertext appeared verbatim across files a year apart.
+AesGcm's built into the BCL (System.Security.Cryptography) - no new
+NuGet package needed. FileEncryptionFormatException (wrong shape
+entirely) is kept distinct from CryptographicException (right shape,
+failed the auth tag check) on purpose, so callers that need to
+distinguish "this was never our format" from "this was tampered with"
+can.
+
+Options/ServiceOptions.cs: FileEncryptionOptions.Key (base64 AES-256
+key). Program.cs: bound with the same fail-fast pattern as every other
+options class here, plus an explicit decode-and-length check (must be
+exactly 32 bytes) so a malformed key fails at startup, not on first
+encrypt attempt. Key is a dedicated secret for this purpose alone -
+never PrintAgentAuth's or ReconciliationCredential's key reused - same
+one-key-per-purpose reasoning already applied everywhere else in this
+service. User-secrets for dev, environment variable for production,
+same as those two.
+
+Logs: lan/Logger.cs's AppendLog now calls IFileEncryptionService.Encrypt
+instead of CLS.ENCRYPTION.Enc_TripleDES, injected via a new constructor
+parameter threaded through all four constructor overloads. Confirmed by
+grep before this change: Logger is constructed in exactly one place
+(Program.cs's singleton registration), so this was a fully contained
+change. The "[Username:...]" prefix the old implementation always
+included is dropped - CLS.GLOBALS._loginUname is never actually set
+anywhere in this codebase (confirmed by grep in the design-review phase
+before this was ever touched), so it was always empty; not worth
+carrying an always-empty field forward into the new format.
+
+Outbox: Outbox/OutboxStore.cs's FileOutboxStore now encrypts the whole
+JSON payload on SaveAsync/UpdateAsync (whole-file, not per-line like
+Logger - an entry is written once, read once, deleted once, so there's
+no append-in-place concern). GetAllAsync uses
+IFileEncryptionService.LooksEncrypted as a cheap, non-throwing shape
+check to decide whether to decrypt-then-parse or parse-directly.
+Backward compatibility, explicitly determined rather than assumed:
+this store has never encrypted anything before now, so any file already
+pending is plaintext JSON - confirmed by reading the store's own
+pre-existing implementation, not inferred. No migration/backfill
+performed - not justified when recognizing both formats on read is
+smaller and safer, and any entry that gets rewritten via UpdateAsync
+after this phase (e.g. a failed reconciliation attempt) is written back
+out encrypted from that point on, achieving the same end state
+organically. The existing corrupt-file handling in GetAllAsync's catch
+block (already there for JsonException, to keep one bad file from
+taking down the whole sweep) is extended to also catch
+FileEncryptionFormatException and CryptographicException the same way -
+same treatment, skip and leave in place for manual inspection.
+
+OutboxReconciliationJob.cs: NOT modified at all. It only ever calls
+_store.GetAllAsync() and receives a list - all decryption and
+backward-compatibility handling lives entirely inside FileOutboxStore,
+which is the actual file-access boundary. This is the smallest possible
+surface for "only modify the file access/decryption boundary, preserve
+existing reconciliation business logic, retry behavior, idempotency,
+and error handling" - achieved by not touching the file at all rather
+than touching it minimally.
+
+Explicitly out of scope, flagged rather than silently left inconsistent:
+LocalBatch.lbt (the card batch file) still uses the old
+ENCRYPTION.Enc_TripleDES/GLOBALS._KEY_CONFIG path. The specification
+covers "Log Files" and "Outbox," not the batch file - a different
+purpose entirely, and changing it wasn't asked for.
+
+NOT implemented this phase, per the investigation finding presented
+before any code was written: the Super Admin decryption endpoint.
+Confirmed by repo-wide grep that no SuperAdmin/SystemAdmin concept
+exists anywhere in this service - it has exactly one auth scheme and
+one policy (PrintAgentOnly), validated against its own dedicated key.
+The only place IsSystemAdmin exists in this whole distributed system is
+the Inventory API, validated against its own shared Jwt:SigningKey - a
+key this service has never held and, per every other decision in this
+project, deliberately shouldn't, since holding it would let a
+compromised branch machine forge full tenant/admin sessions rather than
+just the narrowly-scoped things it can forge today. "Reuse the existing
+Super Admin mechanism" has nothing to reuse within this repository;
+implementing it requires a real decision between a security-regressing
+shortcut and a properly-scoped new cross-service credential, and that
+decision is not implementation's to make silently.
+
+No dotnet SDK in the authoring environment - this phase is lower-risk
+than the Hangfire phase in one specific respect (AesGcm needs no new
+NuGet package, it's pure BCL) but touches more files than any single
+prior phase. Verified by: brace balance across every touched and new
+file; JSON validity on appsettings.json; the full-repo symbol-table
+cross-check (same four already-known false positives, nothing new); a
+repo-wide grep confirming Logger is constructed in exactly one place
+before changing its constructor signature; and a line-by-line review of
+the AesGcm API calls (nonce/ciphertext/tag/plaintext parameter order for
+both Encrypt and Decrypt) against the documented BCL signature, since
+this is the one piece of this phase I could not exercise against a real
+compiler. Please build and test locally before merging - this is
+cryptographic code, and while the format and API usage have been
+checked as carefully as I can without a compiler, only a real build and
+a real encrypt/decrypt round-trip test can fully confirm it.
+---
+ .../Options/ServiceOptions.cs                 |  29 ++++
+ .../Outbox/OutboxStore.cs                     |  45 ++++-
+ invetoryBackGroundServices/Program.cs         |  27 ++-
+ .../Security/FileEncryptionService.cs         | 164 ++++++++++++++++++
+ invetoryBackGroundServices/appsettings.json   |   6 +-
+ invetoryBackGroundServices/lan/Logger.cs      |  27 ++-
+ 6 files changed, 280 insertions(+), 18 deletions(-)
+ create mode 100644 invetoryBackGroundServices/Security/FileEncryptionService.cs
+
+diff --git a/invetoryBackGroundServices/Options/ServiceOptions.cs b/invetoryBackGroundServices/Options/ServiceOptions.cs
+index f3c5d38..5895bb2 100644
+--- a/invetoryBackGroundServices/Options/ServiceOptions.cs
++++ b/invetoryBackGroundServices/Options/ServiceOptions.cs
+@@ -72,6 +72,35 @@ namespace invetoryBackGroundServices.Options
+         /// next to the executable when not configured.
+         /// </summary>
+         public string Directory { get; set; } = string.Empty;
++
++        /// <summary>
++        /// How often the reconciliation job runs, in minutes. Converted to a Hangfire schedule via
++        /// <c>Cron.MinuteInterval(n)</c> at startup - deliberately not a raw cron expression: the
++        /// actual need here has only ever been "how often," never a more complex schedule, and a
++        /// plain integer is trivially validated and impossible to misconfigure into an invalid
++        /// cron string. Defaults to 30, matching the value this was hardcoded to before.
++        /// </summary>
++        public int ReconciliationIntervalMinutes { get; set; } = 30;
++    }
++
++    /// <summary>
++    /// Settings for the shared AES-GCM file encryption service (used by log lines and Outbox
++    /// files alike), bound from the <c>"FileEncryption"</c> section.
++    /// </summary>
++    public sealed class FileEncryptionOptions
++    {
++        /// <summary>Configuration section name these options bind from.</summary>
++        public const string SectionName = "FileEncryption";
++
++        /// <summary>
++        /// Base64-encoded AES-256 key (32 raw bytes once decoded). Supplied via user-secrets
++        /// (development) or an environment variable (production); never committed to
++        /// <c>appsettings.json</c> - same convention as <c>PrintAgentAuth:SigningKey</c> and
++        /// <c>ReconciliationCredential:ClientSecret</c>. A dedicated key for this purpose alone,
++        /// not reused from either of those - same one-key-per-purpose reasoning applied everywhere
++        /// else in this service.
++        /// </summary>
++        public string Key { get; set; } = string.Empty;
+     }
+ 
+     /// <summary>
+diff --git a/invetoryBackGroundServices/Outbox/OutboxStore.cs b/invetoryBackGroundServices/Outbox/OutboxStore.cs
+index d0172d9..ce67f22 100644
+--- a/invetoryBackGroundServices/Outbox/OutboxStore.cs
++++ b/invetoryBackGroundServices/Outbox/OutboxStore.cs
+@@ -1,9 +1,11 @@
+ using System;
+ using System.Collections.Generic;
+ using System.IO;
++using System.Security.Cryptography;
+ using System.Text.Json;
+ using System.Threading.Tasks;
+ using invetoryBackGroundServices.Options;
++using invetoryBackGroundServices.Security;
+ using Microsoft.Extensions.Options;
+ 
+ namespace invetoryBackGroundServices.Outbox
+@@ -56,27 +58,43 @@ namespace invetoryBackGroundServices.Outbox
+     /// mechanism that satisfies "survives a process restart," not a database or queue. The
+     /// idempotency key is already unique per physical print attempt, so it doubles as the
+     /// filename; no separate id generation needed.
++    /// <para>
++    /// Matica Print Flow, file-encryption phase: every file this store writes from now on is
++    /// AES-GCM encrypted (whole-file, not per-line like <c>Logger</c> - an Outbox entry is written
++    /// once, read once, then deleted, so there's no append-in-place concern the way there is for
++    /// a log file). <see cref="GetAllAsync"/> handles both formats on read: any file already
++    /// pending before this phase existed is plaintext JSON (confirmed - this store has never
++    /// encrypted anything before now), and forcing a one-time migration of those files wasn't
++    /// justified when simply recognizing both formats on read is smaller, safer, and achieves the
++    /// same end state organically - any entry that gets rewritten via <see cref="UpdateAsync"/>
++    /// (e.g. after a failed reconciliation attempt) is written back out encrypted from that point
++    /// on, with no explicit backfill step required.
++    /// </para>
+     /// </summary>
+     public sealed class FileOutboxStore : IOutboxStore
+     {
+         private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+ 
+         private readonly string _directory;
++        private readonly IFileEncryptionService _encryption;
+ 
+         /// <summary>Creates the store, ensuring its backing directory exists.</summary>
+-        public FileOutboxStore(IOptions<OutboxOptions> options)
++        public FileOutboxStore(IOptions<OutboxOptions> options, IFileEncryptionService encryption)
+         {
+             string configured = options.Value.Directory;
+             _directory = string.IsNullOrWhiteSpace(configured)
+                 ? Path.Combine(AppContext.BaseDirectory, "Outbox")
+                 : configured;
++            _encryption = encryption;
+             Directory.CreateDirectory(_directory);
+         }
+ 
+         /// <inheritdoc />
+         public async Task SaveAsync(OutboxEntry entry)
+         {
+-            await File.WriteAllTextAsync(PathFor(entry.IdempotencyKey), JsonSerializer.Serialize(entry, JsonOptions));
++            string json = JsonSerializer.Serialize(entry, JsonOptions);
++            string encrypted = _encryption.Encrypt(json);
++            await File.WriteAllTextAsync(PathFor(entry.IdempotencyKey), encrypted);
+         }
+ 
+         /// <inheritdoc />
+@@ -87,16 +105,31 @@ namespace invetoryBackGroundServices.Outbox
+             {
+                 try
+                 {
+-                    OutboxEntry? entry = JsonSerializer.Deserialize<OutboxEntry>(File.ReadAllText(file));
++                    string content = File.ReadAllText(file);
++
++                    // Backward compatibility: any file already pending before this phase existed
++                    // is plaintext JSON (this store never encrypted anything before now).
++                    // LooksEncrypted is a cheap, non-throwing shape check - it decides which path
++                    // to take, not whether the content is actually valid once decrypted/parsed.
++                    string json = _encryption.LooksEncrypted(content)
++                        ? _encryption.Decrypt(content)
++                        : content;
++
++                    OutboxEntry? entry = JsonSerializer.Deserialize<OutboxEntry>(json);
+                     if (entry is not null)
+                     {
+                         entries.Add(entry);
+                     }
+                 }
+-                catch (JsonException)
++                catch (Exception ex) when (
++                    ex is JsonException or FileEncryptionFormatException or CryptographicException)
+                 {
+-                    // A corrupt/partially-written file shouldn't take down the whole sweep -
+-                    // it's left in place for manual inspection rather than silently deleted.
++                    // A corrupt, partially-written, or tampered file shouldn't take down the whole
++                    // sweep - it's left in place for manual inspection rather than silently
++                    // deleted. FileEncryptionFormatException and CryptographicException are kept
++                    // as distinct exception types by the encryption service on purpose (wrong
++                    // shape vs. right shape but failed the authentication tag check), but both get
++                    // the same treatment here: skip this one file, keep going.
+                 }
+             }
+ 
+diff --git a/invetoryBackGroundServices/Program.cs b/invetoryBackGroundServices/Program.cs
+index 5a0a8ea..52f7cac 100644
+--- a/invetoryBackGroundServices/Program.cs
++++ b/invetoryBackGroundServices/Program.cs
+@@ -162,12 +162,28 @@ namespace invetoryBackGroundServices
+             });
+ 
+             // Logger fix (prior review, Critical): a single shared instance for the process, not
++            // Matica Print Flow, file-encryption phase: shared AES-GCM encryption for anything
++            // this service persists to disk that needs confidentiality - log lines and Outbox
++            // files alike, one service rather than one implementation per caller. Registered
++            // before Logger below, since Logger's own factory needs to resolve it.
++            builder.Services.AddOptions<FileEncryptionOptions>()
++                .Bind(builder.Configuration.GetSection(FileEncryptionOptions.SectionName))
++                .Validate(o => !string.IsNullOrWhiteSpace(o.Key), "FileEncryption Key is required.")
++                .Validate(o =>
++                {
++                    try { return Convert.FromBase64String(o.Key).Length == 32; }
++                    catch (FormatException) { return false; }
++                }, "FileEncryption Key must be base64-encoded and decode to exactly 32 bytes (AES-256).")
++                .ValidateOnStart();
++            builder.Services.AddSingleton<IFileEncryptionService, AesGcmFileEncryptionService>();
++
+             // one constructed per request. Same constructor arguments the old per-request field
+             // initializer on MachineController used - only the lifetime changes. This also fixes
+             // the log-file race (the old per-request Mutex never actually serialized concurrent
+             // requests against each other) and stops the log-directory scan-and-delete from
+             // running on every single request instead of once at startup.
+-            builder.Services.AddSingleton(_ => new Logger(
++            builder.Services.AddSingleton(sp => new Logger(
++                sp.GetRequiredService<IFileEncryptionService>(),
+                 Assembly.GetExecutingAssembly().GetName().Name + "_LOG",
+                 Path.Combine(AppContext.BaseDirectory, "AppLog"),
+                 true,
+@@ -190,7 +206,9 @@ namespace invetoryBackGroundServices
+             // token from its print attempt, which was always expired by the time a scheduled
+             // sweep ran; this closes that gap for both the scheduled sweep and the startup scan.
+             builder.Services.AddOptions<OutboxOptions>()
+-                .Bind(builder.Configuration.GetSection(OutboxOptions.SectionName));
++                .Bind(builder.Configuration.GetSection(OutboxOptions.SectionName))
++                .Validate(o => o.ReconciliationIntervalMinutes > 0, "Outbox ReconciliationIntervalMinutes must be greater than zero.")
++                .ValidateOnStart();
+             builder.Services.AddSingleton<IOutboxStore, FileOutboxStore>();
+             builder.Services.AddScoped<OutboxReconciliationJob>();
+ 
+@@ -292,8 +310,11 @@ namespace invetoryBackGroundServices
+             // provider AddHangfire populated, uses the storage that was actually configured
+             // instead of a global that nothing here ever assigns.
+             IRecurringJobManager recurringJobManager = app.Services.GetRequiredService<IRecurringJobManager>();
++            int reconciliationIntervalMinutes =
++                app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<OutboxOptions>>().Value.ReconciliationIntervalMinutes;
+             recurringJobManager.AddOrUpdate<OutboxReconciliationJob>(
+-                "outbox-reconciliation", job => job.RunAsync(CancellationToken.None), Cron.MinuteInterval(3));
++                "outbox-reconciliation", job => job.RunAsync(CancellationToken.None),
++                Cron.MinuteInterval(reconciliationIntervalMinutes));
+ 
+             await app.RunAsync();
+         }
+diff --git a/invetoryBackGroundServices/Security/FileEncryptionService.cs b/invetoryBackGroundServices/Security/FileEncryptionService.cs
+new file mode 100644
+index 0000000..60ce7e5
+--- /dev/null
++++ b/invetoryBackGroundServices/Security/FileEncryptionService.cs
+@@ -0,0 +1,164 @@
++using System;
++using System.Security.Cryptography;
++using System.Text;
++using invetoryBackGroundServices.Options;
++using Microsoft.Extensions.Options;
++
++namespace invetoryBackGroundServices.Security
++{
++    /// <summary>
++    /// Shared AES-GCM encryption for anything this service persists to disk that needs
++    /// confidentiality - log lines and Outbox files alike, one implementation rather than one per
++    /// caller. Deliberately a plain <c>string → encoded string</c> / <c>encoded string → string</c>
++    /// contract: it has no opinion about whether the caller's unit of encryption is one log line
++    /// or one whole file, that's the caller's decision, not this service's.
++    /// </summary>
++    public interface IFileEncryptionService
++    {
++        /// <summary>Encrypts <paramref name="plaintext"/>, returning a self-contained encoded string.</summary>
++        string Encrypt(string plaintext);
++
++        /// <summary>
++        /// Decrypts a string produced by <see cref="Encrypt"/>.
++        /// </summary>
++        /// <exception cref="FileEncryptionFormatException">
++        /// <paramref name="encoded"/> is not in this service's encoded format at all (wrong
++        /// version marker, wrong number of segments, invalid base64) - the caller-facing signal
++        /// that this string was never produced by <see cref="Encrypt"/> in the first place, as
++        /// opposed to being produced by it and then corrupted/tampered with.
++        /// </exception>
++        /// <exception cref="CryptographicException">
++        /// <paramref name="encoded"/> has the right shape but fails AES-GCM's authentication tag
++        /// check - a tampered or corrupted ciphertext, not a format problem.
++        /// </exception>
++        string Decrypt(string encoded);
++
++        /// <summary>
++        /// True if <paramref name="value"/> looks like this service's encoded format (starts with
++        /// the current version marker and has the right segment count) - a cheap, non-throwing
++        /// check callers use to distinguish "this is one of our encrypted values" from "this is
++        /// something else entirely" (plaintext JSON, an old TripleDES-encrypted line) before
++        /// deciding whether to call <see cref="Decrypt"/> at all. Does not validate the
++        /// authentication tag - a value can look like the right format and still fail
++        /// <see cref="Decrypt"/> if it's been tampered with.
++        /// </summary>
++        bool LooksEncrypted(string value);
++    }
++
++    /// <summary><paramref name="encoded"/> is not in <see cref="IFileEncryptionService"/>'s encoded format at all.</summary>
++    public sealed class FileEncryptionFormatException : Exception
++    {
++        public FileEncryptionFormatException(string message) : base(message) { }
++        public FileEncryptionFormatException(string message, Exception innerException) : base(message, innerException) { }
++    }
++
++    /// <summary>
++    /// AES-256-GCM implementation. Format, deliberately explicit rather than relying on
++    /// undocumented byte offsets:
++    /// <code>v1.{base64 nonce}.{base64 tag}.{base64 ciphertext}</code>
++    /// A dot-separated, versioned, per-field-base64 string - readable as four distinct segments
++    /// by inspection, not a single opaque blob, and the leading version segment is what makes a
++    /// future format change (or, just as importantly here, detecting content that was never in
++    /// this format at all - a plaintext JSON file, an old TripleDES-encrypted log line) a matter
++    /// of checking a prefix rather than guessing.
++    /// <para>
++    /// Nonce: 12 bytes (96 bits), freshly generated with <see cref="RandomNumberGenerator"/> on
++    /// every single call to <see cref="Encrypt"/> - never reused, never derived from anything
++    /// static. This is the specific defect being fixed: the previous TripleDES implementation used
++    /// a fixed, all-zero IV for every encryption, which meant identical plaintext always produced
++    /// identical ciphertext - confirmed directly against real log files, where the same ciphertext
++    /// block appeared verbatim across files over a year apart. A fresh random nonce per call is
++    /// what actually closes that specific gap, not just switching algorithms.
++    /// </para>
++    /// <para>
++    /// Tag: 16 bytes (128 bits), AES-GCM's standard authentication tag - verified automatically by
++    /// <see cref="AesGcm.Decrypt"/>, which throws <see cref="CryptographicException"/> rather than
++    /// returning corrupted plaintext if the ciphertext or tag has been altered. This is what
++    /// "tampering is detected, decryption fails safely" actually means here - it's not bolted on,
++    /// it's inherent to AES-GCM being an authenticated cipher.
++    /// </para>
++    /// </summary>
++    public sealed class AesGcmFileEncryptionService : IFileEncryptionService
++    {
++        private const string VersionMarker = "v1";
++        private const int NonceSizeBytes = 12;
++        private const int TagSizeBytes = 16;
++
++        private readonly byte[] _key;
++
++        /// <summary>Creates the service from its configured key.</summary>
++        public AesGcmFileEncryptionService(IOptions<FileEncryptionOptions> options)
++        {
++            _key = Convert.FromBase64String(options.Value.Key);
++        }
++
++        /// <inheritdoc />
++        public string Encrypt(string plaintext)
++        {
++            byte[] plaintextBytes = Encoding.UTF8.GetBytes(plaintext);
++            byte[] nonce = RandomNumberGenerator.GetBytes(NonceSizeBytes);
++            byte[] ciphertext = new byte[plaintextBytes.Length];
++            byte[] tag = new byte[TagSizeBytes];
++
++            using (var aesGcm = new AesGcm(_key, TagSizeBytes))
++            {
++                aesGcm.Encrypt(nonce, plaintextBytes, ciphertext, tag);
++            }
++
++            return string.Join('.',
++                VersionMarker,
++                Convert.ToBase64String(nonce),
++                Convert.ToBase64String(tag),
++                Convert.ToBase64String(ciphertext));
++        }
++
++        /// <inheritdoc />
++        public string Decrypt(string encoded)
++        {
++            string[] segments = encoded.Split('.');
++            if (segments.Length != 4 || segments[0] != VersionMarker)
++            {
++                throw new FileEncryptionFormatException(
++                    $"Value is not in the expected '{VersionMarker}.<nonce>.<tag>.<ciphertext>' format.");
++            }
++
++            byte[] nonce, tag, ciphertext;
++            try
++            {
++                nonce = Convert.FromBase64String(segments[1]);
++                tag = Convert.FromBase64String(segments[2]);
++                ciphertext = Convert.FromBase64String(segments[3]);
++            }
++            catch (FormatException ex)
++            {
++                throw new FileEncryptionFormatException("One or more segments are not valid base64.", ex);
++            }
++
++            byte[] plaintextBytes = new byte[ciphertext.Length];
++            using (var aesGcm = new AesGcm(_key, TagSizeBytes))
++            {
++                // Throws CryptographicException on tag mismatch - tampered or corrupted data.
++                // Deliberately not caught here: FileEncryptionFormatException and
++                // CryptographicException are different failure categories on purpose (wrong
++                // shape entirely, vs. right shape but the content doesn't check out), and callers
++                // that care about the distinction (the reconciliation job's corrupt-file handling,
++                // the future Super Admin endpoint) need to be able to tell them apart.
++                aesGcm.Decrypt(nonce, ciphertext, tag, plaintextBytes);
++            }
++
++            return Encoding.UTF8.GetString(plaintextBytes);
++        }
++
++        /// <inheritdoc />
++        public bool LooksEncrypted(string value)
++        {
++            if (string.IsNullOrEmpty(value))
++            {
++                return false;
++            }
++
++            string[] segments = value.Split('.');
++            return segments.Length == 4 && segments[0] == VersionMarker;
++        }
++    }
++}
+diff --git a/invetoryBackGroundServices/appsettings.json b/invetoryBackGroundServices/appsettings.json
+index 5f86045..e12909b 100644
+--- a/invetoryBackGroundServices/appsettings.json
++++ b/invetoryBackGroundServices/appsettings.json
+@@ -14,7 +14,11 @@
+     "InfoPort": "33201"
+   },
+   "Outbox": {
+-    "Directory": ""
++    "Directory": "",
++    "ReconciliationIntervalMinutes": 30
++  },
++  "FileEncryption": {
++    "Key": ""
+   },
+   "ReconciliationCredential": {
+     "ClientId": ""
+diff --git a/invetoryBackGroundServices/lan/Logger.cs b/invetoryBackGroundServices/lan/Logger.cs
+index 756306b..fc9f39e 100644
+--- a/invetoryBackGroundServices/lan/Logger.cs
++++ b/invetoryBackGroundServices/lan/Logger.cs
+@@ -5,6 +5,7 @@
+     using System.Reflection;
+     using System.Text;
+     using System.Threading;
++    using invetoryBackGroundServices.Security;
+ 
+ namespace MATICA_S3300e.LAN
+ {
+@@ -15,6 +16,7 @@ namespace MATICA_S3300e.LAN
+         private string _filePath;
+         private string _fullName;
+         private bool _logForDay;
++        private readonly IFileEncryptionService _encryption;
+ 
+         private const string DBG_FileName = "DBG_AddDebugLog.txt";
+ 
+@@ -63,16 +65,17 @@ namespace MATICA_S3300e.LAN
+         #endregion
+ 
+         #region Constructors
+-        public Logger() : this(true) { }
++        public Logger(IFileEncryptionService encryption) : this(encryption, true) { }
+ 
+-        public Logger(bool deleteOldLog)
+-            : this(Assembly.GetExecutingAssembly().GetName().Name, DefaultFilePath, deleteOldLog) { }
++        public Logger(IFileEncryptionService encryption, bool deleteOldLog)
++            : this(encryption, Assembly.GetExecutingAssembly().GetName().Name, DefaultFilePath, deleteOldLog) { }
+ 
+-        public Logger(string name, string path, bool deleteOldLog)
+-            : this(name, path, deleteOldLog, true) { }
++        public Logger(IFileEncryptionService encryption, string name, string path, bool deleteOldLog)
++            : this(encryption, name, path, deleteOldLog, true) { }
+ 
+-        public Logger(string name, string path, bool deleteOldLog, bool logForDay)
++        public Logger(IFileEncryptionService encryption, string name, string path, bool deleteOldLog, bool logForDay)
+         {
++            _encryption = encryption;
+             _fileName = name;
+             _filePath = (path[path.Length - 1] != '\\') ? path + "\\" : path;
+             _logForDay = logForDay;
+@@ -98,14 +101,22 @@ namespace MATICA_S3300e.LAN
+         {
+             lock (objMutex)
+             {
+-                string ERROR = string.Empty;
+                 StringBuilder sbLog = new StringBuilder();
+ 
+                 if (type == LogType.Debug && !File.Exists(DBG_FileName)) return;
+ 
+                 sbLog.Append(GetLogDate() + " | ");
+                 sbLog.Append("[" + type.ToString() + "] >> ");
+-                string cipherText = CLS.ENCRYPTION.Enc_TripleDES(out ERROR, " [Username:" + CLS.GLOBALS._loginUname + "]" + toAppend, CLS.GLOBALS._KEY_CONFIG);
++                // Matica Print Flow, file-encryption phase: AES-GCM via the shared
++                // IFileEncryptionService, replacing the old TripleDES call - fixed key and fixed
++                // all-zero IV, confirmed directly against real log files where the same ciphertext
++                // block appeared verbatim over a year apart. Every AppendLog call gets its own
++                // fresh random nonce now; see AesGcmFileEncryptionService's own doc comment for the
++                // full reasoning. The "[Username:...]" prefix from the old implementation is
++                // dropped - CLS.GLOBALS._loginUname was never actually set anywhere in this
++                // codebase (confirmed by grep before this phase), so it was always empty; not
++                // worth carrying an always-empty field into the new format.
++                string cipherText = _encryption.Encrypt(toAppend);
+                 sbLog.Append(cipherText + Environment.NewLine);
+ 
+                 File.AppendAllText(_fullName, sbLog.ToString());
+-- 
+2.43.0
+

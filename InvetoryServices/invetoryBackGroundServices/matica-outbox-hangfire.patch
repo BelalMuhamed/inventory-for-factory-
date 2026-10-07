@@ -1,0 +1,474 @@
+From cf267eb667616964fa3ef79f5c2641d80cc1f0f2 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Sun, 23 Aug 2026 09:41:28 +0000
+Subject: [PATCH] Reliability plan (Phase 7): file outbox + Hangfire memory
+ storage + 30-minute sweep + startup scan
+
+Rebuilt against the actual current repo state (commit 2a0a577) after the
+previous version of this patch was generated against an out-of-date
+Program.cs/appsettings.json that predated the 401-fix patch's changes -
+that mismatch is what caused the earlier apply failures, not an issue
+with the two patches being incompatible with each other. Content is
+otherwise identical to what was described previously:
+
+- Outbox/OutboxStore.cs: OutboxEntry + IOutboxStore/FileOutboxStore, one
+  JSON file per pending entry under a configurable directory
+  (Outbox:Directory), keyed by idempotency key.
+- Outbox/OutboxReconciliationJob.cs: sweeps every pending entry, retries
+  RecordPrintResultAsync, deletes on success, records attempt
+  count/last failure and re-queues on failure.
+- MachineController.Print: the existing 207 branch now also writes an
+  outbox entry before returning, carrying the original bearer token.
+- Program.cs: IOutboxStore (singleton)/OutboxReconciliationJob (scoped)
+  registered; AddHangfire(UseMemoryStorage())/AddHangfireServer() wired
+  in; startup scan runs once before the app starts serving, then
+  RecurringJob.AddOrUpdate schedules the same job every 30 minutes via
+  Cron.MinuteInterval(30). Main is now async Task; app.Run() ->
+  await app.RunAsync().
+- invetoryBackGroundServices.csproj: Hangfire.AspNetCore 1.8.14 and
+  Hangfire.MemoryStorage 1.8.1.1 added.
+
+Same unresolved limitation as before, still open: every OutboxEntry
+carries a Print Agent token with a 5-minute default lifetime, while the
+reconciliation sweep runs every 30 minutes - by the time a scheduled
+sweep fires, that token will essentially always be expired, and the
+Printer Agent cannot mint itself a new one. The startup scan has a real
+chance of working; the scheduled sweep will typically just log the
+expired token and re-queue. See OutboxReconciliationJob's doc comment
+for the three resolution paths - still your call, not picked here.
+
+No dotnet SDK or NuGet access in the authoring environment. Verified by
+re-reading the actual current Program.cs/appsettings.json/
+MachineController.cs/csproj directly from this exact commit before
+making any edit (not assumed from a prior session), the full-repo
+symbol-table cross-check (same four already-known false positives,
+nothing new), brace balance across every touched file, and JSON/XML
+validity on appsettings.json, the .csproj, and both resx files.
+---
+ .../Controllers/MachineController.cs          |  22 +++-
+ .../Options/ServiceOptions.cs                 |  16 +++
+ .../Outbox/OutboxReconciliationJob.cs         |  98 ++++++++++++++
+ .../Outbox/OutboxStore.cs                     | 123 ++++++++++++++++++
+ invetoryBackGroundServices/Program.cs         |  37 +++++-
+ invetoryBackGroundServices/appsettings.json   |   3 +
+ .../invetoryBackGroundServices.csproj         |   2 +
+ 7 files changed, 298 insertions(+), 3 deletions(-)
+ create mode 100644 invetoryBackGroundServices/Outbox/OutboxReconciliationJob.cs
+ create mode 100644 invetoryBackGroundServices/Outbox/OutboxStore.cs
+
+diff --git a/invetoryBackGroundServices/Controllers/MachineController.cs b/invetoryBackGroundServices/Controllers/MachineController.cs
+index 4e34ae7..8ba1aee 100644
+--- a/invetoryBackGroundServices/Controllers/MachineController.cs
++++ b/invetoryBackGroundServices/Controllers/MachineController.cs
+@@ -5,6 +5,7 @@ using System.Threading;
+ using AUBServicesLayer.Enums;
+ using invetoryBackGroundServices.Common;
+ using invetoryBackGroundServices.Machine;
++using invetoryBackGroundServices.Outbox;
+ using invetoryBackGroundServices.Params;
+ using invetoryBackGroundServices.PrintFlow;
+ using invetoryBackGroundServices.Security;
+@@ -31,6 +32,7 @@ namespace invetoryBackGroundServices.Controllers
+     {
+         private readonly IPrintFlowClient _printFlowClient;
+         private readonly IMaticaCommandClient _machine;
++        private readonly IOutboxStore _outbox;
+         private readonly Logger _log;
+ 
+         string ERROR = string.Empty;
+@@ -45,10 +47,12 @@ namespace invetoryBackGroundServices.Controllers
+         /// <c>ENCRYPTION.Enc_TripleDES</c> in the local batch write below, unrelated to the
+         /// deleted hardware-communication layer.
+         /// </summary>
+-        public MachineController(IPrintFlowClient printFlowClient, IMaticaCommandClient machine, Logger log)
++        public MachineController(
++            IPrintFlowClient printFlowClient, IMaticaCommandClient machine, IOutboxStore outbox, Logger log)
+         {
+             _printFlowClient = printFlowClient;
+             _machine = machine;
++            _outbox = outbox;
+             _log = log;
+         }
+ 
+@@ -332,6 +336,22 @@ namespace invetoryBackGroundServices.Controllers
+                     $"print-result could not be confirmed for item {productItemId}, idempotencyKey {idempotencyKey}: " +
+                     recordResult.ErrorMessage, Logger.LogType.Error);
+ 
++                // Reliability plan, Phase 7: persist what's needed to retry this confirmation
++                // later, so it survives a Printer Agent crash/restart rather than existing only in
++                // this request's memory. See OutboxReconciliationJob's doc comment for the
++                // still-open question of how a scheduled (as opposed to startup) retry
++                // authenticates once this request's own Print Agent token has expired.
++                await _outbox.SaveAsync(new OutboxEntry
++                {
++                    IdempotencyKey = idempotencyKey,
++                    ProductItemId = productItemId,
++                    BranchId = dto.BranchId,
++                    Success = printSucceeded,
++                    HolderName = dto.CardHolderName.Trim(),
++                    BearerToken = GetBearerToken(),
++                    CreatedAtUtc = DateTime.UtcNow
++                });
++
+                 return StatusCode(207, ApiResponse<PrintResult>.Ok(
+                     new PrintResult(true, false, productItemId, idempotencyKey)));
+             }
+diff --git a/invetoryBackGroundServices/Options/ServiceOptions.cs b/invetoryBackGroundServices/Options/ServiceOptions.cs
+index c1fd6a3..aeaeefe 100644
+--- a/invetoryBackGroundServices/Options/ServiceOptions.cs
++++ b/invetoryBackGroundServices/Options/ServiceOptions.cs
+@@ -40,4 +40,20 @@ namespace invetoryBackGroundServices.Options
+         /// </summary>
+         public string[] AllowedOrigins { get; set; } = [];
+     }
++
++    /// <summary>
++    /// Settings for the file-based outbox (reliability plan, Phase 7), bound from the
++    /// <c>"Outbox"</c> section.
++    /// </summary>
++    public sealed class OutboxOptions
++    {
++        /// <summary>Configuration section name these options bind from.</summary>
++        public const string SectionName = "Outbox";
++
++        /// <summary>
++        /// Directory pending outbox entries are written to. Defaults to an <c>Outbox</c> folder
++        /// next to the executable when not configured.
++        /// </summary>
++        public string Directory { get; set; } = string.Empty;
++    }
+ }
+diff --git a/invetoryBackGroundServices/Outbox/OutboxReconciliationJob.cs b/invetoryBackGroundServices/Outbox/OutboxReconciliationJob.cs
+new file mode 100644
+index 0000000..878a7ba
+--- /dev/null
++++ b/invetoryBackGroundServices/Outbox/OutboxReconciliationJob.cs
+@@ -0,0 +1,98 @@
++using System;
++using System.Threading;
++using System.Threading.Tasks;
++using invetoryBackGroundServices.PrintFlow;
++using invetoryBackGroundServices.Services;
++using MATICA_S3300e.LAN;
++
++namespace invetoryBackGroundServices.Outbox
++{
++    /// <summary>
++    /// Reconciles pending <see cref="OutboxEntry"/> records - print outcomes whose Backend Call #2
++    /// confirmation to the Inventory API could not be delivered even after the in-request retry
++    /// loop was exhausted. Run both on a recurring schedule (every 30 minutes, see
++    /// <c>Program.cs</c>) and once at startup, so a crash between the original attempt and the
++    /// next scheduled tick doesn't leave anything stranded until the following tick.
++    /// <para>
++    /// <b>Known, unresolved limitation - flagged rather than built around silently:</b> each entry
++    /// carries the Print Agent token from its <em>original</em> print attempt
++    /// (<see cref="OutboxEntry.BearerToken"/>), and that token is short-lived (5 minutes by
++    /// default on the Inventory API side) specifically so a compromised branch machine's blast
++    /// radius stays small. This job's whole reason to exist is reconciling failures that survive
++    /// past a single request's retry window - by the time a 30-minute scheduled sweep runs, the
++    /// original token will essentially always have expired, and the Printer Agent has no way to
++    /// mint itself a fresh one (only Angular, with the user's live session, can call
++    /// <c>POST api/auth/print-agent-token</c>). The startup scan has a real chance of succeeding
++    /// (a quick crash-and-restart can land within the token's 5-minute window), but the scheduled
++    /// 30-minute sweep will typically just confirm the token is dead, log it, and leave the entry
++    /// queued - which is honest behavior, not a bug, but it means this job alone does not fully
++    /// close the reliability gap it was built for. Closing it needs one of: a separate, narrowly-
++    /// scoped, longer-lived credential used only by this job (a real secret-management decision,
++    /// not something to pick silently); a way for this service to request a fresh token itself
++    /// (a new Inventory API capability); or accepting that anything still unconfirmed after the
++    /// token expires becomes a manual-reconciliation item, with the outbox directory itself as
++    /// the audit trail. That decision is outstanding.
++    /// </para>
++    /// </summary>
++    public sealed class OutboxReconciliationJob
++    {
++        private readonly IOutboxStore _store;
++        private readonly IPrintFlowClient _printFlowClient;
++        private readonly Logger _log;
++
++        /// <summary>Creates the job with its collaborators.</summary>
++        public OutboxReconciliationJob(IOutboxStore store, IPrintFlowClient printFlowClient, Logger log)
++        {
++            _store = store;
++            _printFlowClient = printFlowClient;
++            _log = log;
++        }
++
++        /// <summary>Attempts to reconcile every pending entry once.</summary>
++        public async Task RunAsync(CancellationToken cancellationToken = default)
++        {
++            var entries = await _store.GetAllAsync();
++            if (entries.Count == 0)
++            {
++                return;
++            }
++
++            _log.AppendLog($"Outbox sweep: {entries.Count} pending entr{(entries.Count == 1 ? "y" : "ies")}.", Logger.LogType.Info);
++
++            foreach (OutboxEntry entry in entries)
++            {
++                await ReconcileOneAsync(entry, cancellationToken);
++            }
++        }
++
++        private async Task ReconcileOneAsync(OutboxEntry entry, CancellationToken cancellationToken)
++        {
++            PrintFlowResult<object?> result = await _printFlowClient.RecordPrintResultAsync(
++                entry.BearerToken, entry.ProductItemId, entry.BranchId, entry.Success, entry.HolderName,
++                entry.IdempotencyKey, cancellationToken);
++
++            if (result.Success)
++            {
++                await _store.DeleteAsync(entry.IdempotencyKey);
++                _log.AppendLog(
++                    $"Outbox: reconciled item {entry.ProductItemId}, idempotencyKey {entry.IdempotencyKey}.",
++                    Logger.LogType.Info);
++                return;
++            }
++
++            // Still not confirmed - almost certainly the token-expiry limitation described above
++            // for anything past the startup scan. Recorded on the entry itself (attempt count,
++            // last failure) so the outbox directory doubles as an audit trail for manual
++            // reconciliation, then left in place for the next sweep rather than discarded.
++            entry.AttemptCount++;
++            entry.LastAttemptUtc = DateTime.UtcNow;
++            entry.LastFailureReason = result.ErrorMessage;
++            await _store.UpdateAsync(entry);
++
++            _log.AppendLog(
++                $"Outbox: reconciliation attempt {entry.AttemptCount} for item {entry.ProductItemId}, " +
++                $"idempotencyKey {entry.IdempotencyKey} still failing: {result.ErrorMessage}",
++                Logger.LogType.Error);
++        }
++    }
++}
+diff --git a/invetoryBackGroundServices/Outbox/OutboxStore.cs b/invetoryBackGroundServices/Outbox/OutboxStore.cs
+new file mode 100644
+index 0000000..127d888
+--- /dev/null
++++ b/invetoryBackGroundServices/Outbox/OutboxStore.cs
+@@ -0,0 +1,123 @@
++using System;
++using System.Collections.Generic;
++using System.IO;
++using System.Text.Json;
++using System.Threading.Tasks;
++using invetoryBackGroundServices.Options;
++using Microsoft.Extensions.Options;
++
++namespace invetoryBackGroundServices.Outbox
++{
++    /// <summary>
++    /// One pending print-result confirmation that could not be delivered to the Inventory API
++    /// after Backend Call #2's in-request retries were exhausted (the "printed but could not
++    /// confirm" / HTTP 207 scenario). Persisted so the outcome survives a Printer Agent crash or
++    /// restart between the original attempt and eventual reconciliation.
++    /// <para>
++    /// <b>Known limitation, not yet resolved - see the reconciliation job's own doc comment:</b>
++    /// <see cref="BearerToken"/> is the Print Agent token from the <em>original</em> print
++    /// attempt, and that token is short-lived (5 minutes by default) while this outbox exists
++    /// specifically to survive delays longer than a single request's retry loop. By the time a
++    /// scheduled sweep runs, it will typically already be expired.
++    /// </para>
++    /// </summary>
++    public sealed class OutboxEntry
++    {
++        public string IdempotencyKey { get; set; } = string.Empty;
++        public long ProductItemId { get; set; }
++        public long BranchId { get; set; }
++        public bool Success { get; set; }
++        public string? HolderName { get; set; }
++        public string BearerToken { get; set; } = string.Empty;
++        public DateTime CreatedAtUtc { get; set; }
++        public int AttemptCount { get; set; }
++        public DateTime? LastAttemptUtc { get; set; }
++        public string? LastFailureReason { get; set; }
++    }
++
++    /// <summary>Persists and retrieves pending <see cref="OutboxEntry"/> records.</summary>
++    public interface IOutboxStore
++    {
++        /// <summary>Persists a new entry, keyed by its idempotency key.</summary>
++        Task SaveAsync(OutboxEntry entry);
++
++        /// <summary>Returns every currently pending entry.</summary>
++        Task<IReadOnlyList<OutboxEntry>> GetAllAsync();
++
++        /// <summary>Overwrites an existing entry (e.g. after a failed retry, to record the attempt).</summary>
++        Task UpdateAsync(OutboxEntry entry);
++
++        /// <summary>Removes an entry once it has been successfully reconciled.</summary>
++        Task DeleteAsync(string idempotencyKey);
++    }
++
++    /// <summary>
++    /// One JSON file per pending entry under a configured directory - deliberately the simplest
++    /// mechanism that satisfies "survives a process restart," not a database or queue. The
++    /// idempotency key is already unique per physical print attempt, so it doubles as the
++    /// filename; no separate id generation needed.
++    /// </summary>
++    public sealed class FileOutboxStore : IOutboxStore
++    {
++        private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
++
++        private readonly string _directory;
++
++        /// <summary>Creates the store, ensuring its backing directory exists.</summary>
++        public FileOutboxStore(IOptions<OutboxOptions> options)
++        {
++            string configured = options.Value.Directory;
++            _directory = string.IsNullOrWhiteSpace(configured)
++                ? Path.Combine(AppContext.BaseDirectory, "Outbox")
++                : configured;
++            Directory.CreateDirectory(_directory);
++        }
++
++        /// <inheritdoc />
++        public async Task SaveAsync(OutboxEntry entry)
++        {
++            await File.WriteAllTextAsync(PathFor(entry.IdempotencyKey), JsonSerializer.Serialize(entry, JsonOptions));
++        }
++
++        /// <inheritdoc />
++        public Task<IReadOnlyList<OutboxEntry>> GetAllAsync()
++        {
++            var entries = new List<OutboxEntry>();
++            foreach (string file in Directory.EnumerateFiles(_directory, "*.json"))
++            {
++                try
++                {
++                    OutboxEntry? entry = JsonSerializer.Deserialize<OutboxEntry>(File.ReadAllText(file));
++                    if (entry is not null)
++                    {
++                        entries.Add(entry);
++                    }
++                }
++                catch (JsonException)
++                {
++                    // A corrupt/partially-written file shouldn't take down the whole sweep -
++                    // it's left in place for manual inspection rather than silently deleted.
++                }
++            }
++
++            return Task.FromResult<IReadOnlyList<OutboxEntry>>(entries);
++        }
++
++        /// <inheritdoc />
++        public Task UpdateAsync(OutboxEntry entry) => SaveAsync(entry);
++
++        /// <inheritdoc />
++        public Task DeleteAsync(string idempotencyKey)
++        {
++            string path = PathFor(idempotencyKey);
++            if (File.Exists(path))
++            {
++                File.Delete(path);
++            }
++
++            return Task.CompletedTask;
++        }
++
++        private string PathFor(string idempotencyKey) => Path.Combine(_directory, $"{idempotencyKey}.json");
++    }
++}
+diff --git a/invetoryBackGroundServices/Program.cs b/invetoryBackGroundServices/Program.cs
+index 0d20911..4e7d6ae 100644
+--- a/invetoryBackGroundServices/Program.cs
++++ b/invetoryBackGroundServices/Program.cs
+@@ -1,8 +1,11 @@
+ 
++using Hangfire;
++using Hangfire.MemoryStorage;
+ using invetoryBackGroundServices.Common;
+ using invetoryBackGroundServices.Machine;
+ using invetoryBackGroundServices.Middleware;
+ using invetoryBackGroundServices.Options;
++using invetoryBackGroundServices.Outbox;
+ using invetoryBackGroundServices.Resources.Localization;
+ using invetoryBackGroundServices.Security;
+ using invetoryBackGroundServices.Services;
+@@ -22,7 +25,7 @@ namespace invetoryBackGroundServices
+ {
+     public class Program
+     {
+-        public static void Main(string[] args)
++        public static async Task Main(string[] args)
+         {
+             var builder = WebApplication.CreateBuilder(args);
+ 
+@@ -177,6 +180,21 @@ namespace invetoryBackGroundServices
+             // model the new async layer deserializes into); only the DI wiring for the four
+             // request-scoped mutable-state types the legacy synchronous layer needed is gone.
+ 
++            // Reliability plan, Phase 7: file-based outbox + Hangfire (memory storage, per
++            // approved decision - the outbox file is already the durable part, so a persisted
++            // job store would be redundant weight for a single-machine branch service) running a
++            // 30-minute recurring sweep plus a startup scan. See OutboxReconciliationJob's doc
++            // comment for the still-open question this does not fully resolve: the token each
++            // entry carries is short-lived and will typically have expired before a *scheduled*
++            // sweep runs, though the *startup* scan has a real chance of landing in time.
++            builder.Services.AddOptions<OutboxOptions>()
++                .Bind(builder.Configuration.GetSection(OutboxOptions.SectionName));
++            builder.Services.AddSingleton<IOutboxStore, FileOutboxStore>();
++            builder.Services.AddScoped<OutboxReconciliationJob>();
++
++            builder.Services.AddHangfire(config => config.UseMemoryStorage());
++            builder.Services.AddHangfireServer();
++
+             // Machine communication timeout: backend configuration, not per-request data.
+             builder.Services.AddOptions<MachineCommunicationOptions>()
+                 .Bind(builder.Configuration.GetSection(MachineCommunicationOptions.SectionName))
+@@ -238,7 +256,22 @@ namespace invetoryBackGroundServices
+             app.UseAuthorization();
+             app.MapControllers();
+ 
+-            app.Run();
++            // Reliability plan, Phase 7: run the reconciliation sweep once immediately (a crash-
++            // and-restart has a real chance of landing inside the Print Agent token's 5-minute
++            // window, unlike the scheduled sweep below), then on a recurring 30-minute schedule.
++            // Blocking here is deliberate and bounded - there is normally nothing, or very few
++            // entries, in the outbox; this is not meant to be a long-running operation.
++            using (IServiceScope startupScope = app.Services.CreateScope())
++            {
++                OutboxReconciliationJob startupJob =
++                    startupScope.ServiceProvider.GetRequiredService<OutboxReconciliationJob>();
++                await startupJob.RunAsync();
++            }
++
++            RecurringJob.AddOrUpdate<OutboxReconciliationJob>(
++                "outbox-reconciliation", job => job.RunAsync(CancellationToken.None), Cron.MinuteInterval(30));
++
++            await app.RunAsync();
+         }
+ 
+         private static void EnsureCorsOriginsConfigured(CorsPolicyOptions corsOptions)
+diff --git a/invetoryBackGroundServices/appsettings.json b/invetoryBackGroundServices/appsettings.json
+index 0187b49..3d97498 100644
+--- a/invetoryBackGroundServices/appsettings.json
++++ b/invetoryBackGroundServices/appsettings.json
+@@ -12,6 +12,9 @@
+   "MachineCommunication": {
+     "TimeoutSeconds": 10
+   },
++  "Outbox": {
++    "Directory": ""
++  },
+   "InventoryApi": {
+     "BaseUrl": "https://localhost:7037/"
+   },
+diff --git a/invetoryBackGroundServices/invetoryBackGroundServices.csproj b/invetoryBackGroundServices/invetoryBackGroundServices.csproj
+index 924074c..bfbfc0c 100644
+--- a/invetoryBackGroundServices/invetoryBackGroundServices.csproj
++++ b/invetoryBackGroundServices/invetoryBackGroundServices.csproj
+@@ -8,6 +8,8 @@
+   </PropertyGroup>
+ 
+   <ItemGroup>
++    <PackageReference Include="Hangfire.AspNetCore" Version="1.8.14" />
++    <PackageReference Include="Hangfire.MemoryStorage" Version="1.8.1.1" />
+     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.27" />
+     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="9.0.5" />
+     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+-- 
+2.43.0
+

@@ -1,0 +1,1571 @@
+From b340e71371d7283e5a058e1e3ea91d1a4b78b254 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Sun, 23 Aug 2026 08:40:10 +0000
+Subject: [PATCH] Legacy cleanup: remove the dead synchronous hardware layer
+
+This was already the planned final phase (gated on hardware validation
+of the print-flow migration, per the roadmap stated when that migration
+shipped) - moved up to run now at explicit request, ahead of outbox/
+Hangfire and the Windows Service scripts, since the gating condition
+(hardware validation) is now satisfied. Not a duplicate of any other
+phase; nothing else in the roadmap touches this layer.
+
+Every deletion below was verified against a repo-wide grep before being
+made, not assumed from the controller alone - the risk here was
+specifically that some class might be shared between the old
+synchronous path and the new async one, which is true for several (see
+"kept" list).
+
+Deleted entirely:
+- lan/MachineCommands.cs - the whole synchronous HttpWebRequest/ref-
+  parameter transport and command-construction class. Confirmed zero
+  remaining consumers: MachineController was the last one, and Print's
+  earlier migration to IMaticaCommandClient was the last method call
+  into it.
+- cls/GLOBALS.cs: Machine_Configuration static class (TIPTEMP/PRES/
+  CONS/TIME) - its only reader was MachineCommands' old Emboss case,
+  which no longer exists; the tipper-parameter phase fully replaced
+  this mechanism with real values flowing through PrintReqDto ->
+  EmbossRequest, so this wasn't just unused, it was obsolete.
+- From lan/CardDataBean.cs (a mixed file - only these nine classes
+  removed, not the whole file): CardData, MachineConnectionClass,
+  ActionClass, MagData, WriteMAGClass, CoverOpenClass, MoveToChipClass,
+  ChipResetClass, ApduExchangeClass. All nine were referenced only by
+  the now-deleted MachineCommands.cs and their own declarations -
+  confirmed by grep, not assumed. The six protocol-shape classes among
+  them (MagData/WriteMAGClass/CoverOpenClass/MoveToChipClass/
+  ChipResetClass/ApduExchangeClass) supported commands that were never
+  exposed via any endpoint, old or new (CoverOpen/RetractCard/WriteMAG/
+  MoveToChip/MoveToCLess) - deleted rather than kept "for later" per
+  the explicit instruction to treat this as a complete removal, not a
+  partial one. Recoverable from this commit's parent if the deferred
+  future phase to expose those commands actually happens.
+
+Deliberately KEPT in lan/CardDataBean.cs, despite living in the same
+file as what got deleted - all still real dependencies of the async
+layer, not legacy: MachineResponse, MachineConfiguration, MachineInfoJSON
+(MachineResponse.MachineStatus is typed as MachineInfoJSON - the class
+survives even though the old per-request DI-injected field referencing
+it doesn't), LoadCardClass, EjectCardClass, ReadMAGClass, EmbossLine,
+EmbossLineClass, AnswerClass, Error (used by MaticaCommandClient for
+both command construction and KO-response interpretation).
+
+MachineController: removed the five now-dead fields (ConnectionInfo,
+MachineInfo, httpAction, Data, MachineComm) and the now-dead InfoText
+field alongside them (zero remaining references once the others were
+gone) - constructor simplified to (IPrintFlowClient, IMaticaCommandClient,
+Logger). ERROR stays; it's still the out-parameter target for
+ENCRYPTION.Enc_TripleDES in Print's local batch write, unrelated to the
+deleted layer.
+
+Program.cs: removed the four AddScoped<MachineConnectionClass/
+MachineInfoJSON/ActionClass/CardData>() registrations - the controller
+constructor was their only consumer. Note this removes DI wiring, not
+the MachineInfoJSON/MachineResponse classes themselves, which remain as
+plain data models the new async layer deserializes into directly via
+JsonConvert rather than via DI.
+
+Not touched: Controllers/HardwareIoPocController.cs (the manually-added
+POC controller) - its doc comments mention MachineCommands.cs by name
+for context but it has no real dependency on it. Out of scope for this
+cleanup since it wasn't part of what was identified as dead, and
+touching a file authored outside this patch series wasn't requested;
+worth a separate decision on whether to remove it now that its purpose
+is served.
+
+No dotnet SDK or NuGet access in the authoring environment. Verified by:
+a repo-wide grep for every deleted symbol before deletion (not after -
+each class's consumer list was established first, then deleted only
+once confirmed to have exactly the expected consumers); a second
+repo-wide grep after deletion confirming zero real remaining references
+(only doc-comment/string-literal mentions, which are fine as historical
+context); the full-repo symbol-table cross-check (four already-known
+false positives - properties/enum members literally named Error,
+confirmed unchanged from every prior phase, nothing new); brace balance
+across every touched file; and JSON/XML validity on appsettings.json,
+the .csproj, and both resx files. Please run a full build locally to
+confirm - this phase touches shared infrastructure across more files
+than any single prior patch, which is exactly the kind of change a
+compiler check matters most for.
+---
+ .../Controllers/MachineController.cs          |  34 +-
+ invetoryBackGroundServices/Program.cs         |  10 +-
+ invetoryBackGroundServices/cls/GLOBALS.cs     |  49 +-
+ .../lan/CardDataBean.cs                       | 480 +----------
+ .../lan/MachineCommands.cs                    | 799 ------------------
+ 5 files changed, 17 insertions(+), 1355 deletions(-)
+ delete mode 100644 invetoryBackGroundServices/lan/MachineCommands.cs
+
+diff --git a/invetoryBackGroundServices/Controllers/MachineController.cs b/invetoryBackGroundServices/Controllers/MachineController.cs
+index 1f5cdac..4e34ae7 100644
+--- a/invetoryBackGroundServices/Controllers/MachineController.cs
++++ b/invetoryBackGroundServices/Controllers/MachineController.cs
+@@ -29,43 +29,27 @@ namespace invetoryBackGroundServices.Controllers
+     [Authorize(Policy = PrintAgentAuthPolicy.Name)]
+     public class MachineController : ControllerBase
+     {
+-        private readonly MachineConnectionClass ConnectionInfo;
+-        private readonly MachineInfoJSON MachineInfo;
+-        private readonly ActionClass httpAction;
+-        private readonly CardData Data;
+         private readonly IPrintFlowClient _printFlowClient;
+         private readonly IMaticaCommandClient _machine;
+         private readonly Logger _log;
+ 
+         string ERROR = string.Empty;
+-        string InfoText = string.Empty;
+-        MachineCommands MachineComm;
+ 
+         /// <summary>
+-        /// <paramref name="log"/> is now injected (singleton, see <see cref="Program"/>) instead of
+-        /// being constructed here per request - the old per-request construction meant every
+-        /// request got its own <see cref="System.Threading.Mutex"/> that never actually serialized
+-        /// writes against any other request's Mutex, and re-ran the log-directory scan-and-delete
+-        /// on every single call instead of once at startup (prior review, Critical finding).
+-        /// <para>
+-        /// <paramref name="machine"/> is the new async command client. The legacy
+-        /// <see cref="MachineCommands"/> instance is still constructed here because
+-        /// <see cref="Print"/> continues to use it until the print flow migrates in the next
+-        /// phase - the two coexist deliberately rather than the print path being changed twice.
+-        /// </para>
++        /// Legacy-cleanup phase: <c>MachineConnectionClass</c>/<c>MachineInfoJSON</c>/
++        /// <c>ActionClass</c>/<c>CardData</c>/<c>MachineCommands</c> and their DI registrations
++        /// are gone entirely - <see cref="Print"/>'s migration to <see cref="IMaticaCommandClient"/>
++        /// was their last consumer, confirmed by a repo-wide search before deletion, not assumed.
++        /// <c>InfoText</c> was dropped alongside them (no remaining reference once those fields
++        /// were removed); <see cref="ERROR"/> stays - it is still the <c>out</c> target for
++        /// <c>ENCRYPTION.Enc_TripleDES</c> in the local batch write below, unrelated to the
++        /// deleted hardware-communication layer.
+         /// </summary>
+-        public MachineController(
+-            MachineConnectionClass connectionInfo, MachineInfoJSON machineInfo, ActionClass HttpAction,
+-            CardData data, IPrintFlowClient printFlowClient, IMaticaCommandClient machine, Logger log)
++        public MachineController(IPrintFlowClient printFlowClient, IMaticaCommandClient machine, Logger log)
+         {
+-            this.ConnectionInfo = connectionInfo;
+-            this.MachineInfo = machineInfo;
+-            this.httpAction = HttpAction;
+-            this.Data = data;
+             _printFlowClient = printFlowClient;
+             _machine = machine;
+             _log = log;
+-            MachineComm = new MachineCommands(HttpAction, connectionInfo, machineInfo, data, _log);
+         }
+ 
+         /// <summary>Reads the raw bearer token from this request's own Authorization header, to forward unchanged to the Inventory API.</summary>
+diff --git a/invetoryBackGroundServices/Program.cs b/invetoryBackGroundServices/Program.cs
+index fed71a2..7cb729a 100644
+--- a/invetoryBackGroundServices/Program.cs
++++ b/invetoryBackGroundServices/Program.cs
+@@ -138,10 +138,12 @@ namespace invetoryBackGroundServices
+                 true,
+                 true));
+ 
+-            builder.Services.AddScoped<MachineConnectionClass>();
+-            builder.Services.AddScoped<MachineInfoJSON>();
+-            builder.Services.AddScoped<ActionClass>();
+-            builder.Services.AddScoped<CardData>();
++            // Legacy-cleanup phase: AddScoped<MachineConnectionClass/MachineInfoJSON/ActionClass/
++            // CardData>() registrations removed - MachineController's constructor was their only
++            // consumer, and Print no longer needs them since migrating to IMaticaCommandClient.
++            // The classes MachineInfoJSON/MachineResponse/etc. still exist (they're the data
++            // model the new async layer deserializes into); only the DI wiring for the four
++            // request-scoped mutable-state types the legacy synchronous layer needed is gone.
+ 
+             // Machine communication timeout: backend configuration, not per-request data.
+             builder.Services.AddOptions<MachineCommunicationOptions>()
+diff --git a/invetoryBackGroundServices/cls/GLOBALS.cs b/invetoryBackGroundServices/cls/GLOBALS.cs
+index 8ce354c..ccd7833 100644
+--- a/invetoryBackGroundServices/cls/GLOBALS.cs
++++ b/invetoryBackGroundServices/cls/GLOBALS.cs
+@@ -1,4 +1,4 @@
+-﻿using System;
++using System;
+ using System.Collections;
+ using System.Collections.Generic;
+ using System.ComponentModel;
+@@ -57,8 +57,6 @@ namespace MATICA_S3300e.CLS
+         public static Dictionary<string, string> _BankProductList { set { bankProductList = value; SendListItemPropertyChanged("ProductList"); } get { return bankProductList; } }
+         #endregion
+ 
+-
+-        
+         public static bool Load_sharedDirPath(out string _ERR)
+         {
+             try
+@@ -135,51 +133,6 @@ namespace MATICA_S3300e.CLS
+             if (ListItemChanged != null) ListItemChanged(null, new PropertyChangedEventArgs(property));
+         }
+     }
+-    public static class Machine_Configuration
+-    {
+-        #region Variables ...
+-        private static string CONNTYPE = string.Empty;
+-        private static string IP = string.Empty;
+-        private static string PORT = string.Empty;
+-        private static string HTTPACTION = string.Empty;
+-
+-        private static bool TIPPERSTATE = false;
+-        private static int TIPTEMP = 0;
+-        private static int TIPPRES = 0;
+-        private static int TIPCONS = 0;
+-        private static int TIPTIME = 0;
+-
+-        private static string MODEL = string.Empty;
+-        private static string NAME = string.Empty;
+-        private static string SN = string.Empty;
+-        private static int FEEDERID = 0;
+-        private static int HOOPERID = 0;
+-        private static int REJECTID = 0;
+-        private static int COUNTER = 0;
+-        #endregion
+-
+-        #region Properties ...
+-        public static string _CONNTYPE { set { CONNTYPE = value; } get { return CONNTYPE; } }
+-        public static string _IP { set { IP = value; } get { return IP; } }
+-        public static string _PORT { set { PORT = value; } get { return PORT; } }
+-        public static string _HTTPACTION { set { HTTPACTION = value; } get { return HTTPACTION; } }
+-
+-        public static bool _TIPPERSTATE { set { TIPPERSTATE = value; } get { return TIPPERSTATE; } }
+-        public static int _TIPTEMP { set { TIPTEMP = value; } get { return TIPTEMP; } }
+-        public static int _TIPPRES { set { TIPPRES = value; } get { return TIPPRES; } }
+-        public static int _TIPCONS { set { TIPCONS = value; } get { return TIPCONS; } }
+-        public static int _TIPTIME { set { TIPTIME = value; } get { return TIPTIME; } }
+-
+-        public static string _MODEL { set { MODEL = value; } get { return MODEL; } }
+-        public static string _NAME { set { NAME = value; } get { return NAME; } }
+-        public static string _SN { set { SN = value; } get { return SN; } }
+-        public static int _FEEDERID { set { FEEDERID = value; } get { return FEEDERID; } }
+-        public static int _HOOPERID { set { HOOPERID = value; } get { return HOOPERID; } }
+-        public static int _REJECTID { set { REJECTID = value; } get { return REJECTID; } }
+-        public static int _COUNTER { set { COUNTER = value; } get { return COUNTER; } }
+-        #endregion
+-
+-    }
+     public static class Embossing_Data
+     {
+         #region Variables ...
+diff --git a/invetoryBackGroundServices/lan/CardDataBean.cs b/invetoryBackGroundServices/lan/CardDataBean.cs
+index 7b8f5d8..10c5738 100644
+--- a/invetoryBackGroundServices/lan/CardDataBean.cs
++++ b/invetoryBackGroundServices/lan/CardDataBean.cs
+@@ -1,4 +1,4 @@
+-﻿using MATICA_S3300e.CLS;
++using MATICA_S3300e.CLS;
+ using Newtonsoft.Json;
+ using System;
+ using System.Collections.Generic;
+@@ -9,219 +9,6 @@ using System.Threading.Tasks;
+ namespace MATICA_S3300e.LAN
+ {
+     // =============================== Card Data
+-    public class CardData
+-    {
+-        #region Declarations ...
+-        private static int _maxEmbLine = 20;
+-
+-        private int _cardstoproduce;
+-        private string _processmag;
+-        private string _processemb;
+-
+-        private string _trackToRead;
+-        private string _feederid;
+-        private string _stackerid;
+-
+-        private string _coercivity;
+-        private string _tk1;
+-        private string _tk2;
+-        private string _tk3;
+-
+-        private string _readtrackid;
+-
+-        private string _tipperenable;
+-
+-        private string[] _embosslinefont = new string[MaxEmbLine];
+-        private string[] _embosslinecpi = new string[MaxEmbLine];
+-        private string[] _embosslinex = new string[MaxEmbLine];
+-        private string[] _embossliney = new string[MaxEmbLine];
+-        private string[] _embosslinetext = new string[MaxEmbLine];
+-        #endregion
+-
+-        #region Properties
+-        public int CardsToProduce
+-        {
+-            get { return _cardstoproduce; }
+-            set { _cardstoproduce = value; }
+-        }
+-        public static int MaxEmbLine
+-        {
+-            get { return _maxEmbLine; }
+-            set { _maxEmbLine = value; }
+-        }
+-        public string ProcessMag
+-        {
+-            get { return _processmag; }
+-            set { _processmag = value; }
+-        }
+-        public string ProcessEmb
+-        {
+-            get { return _processemb; }
+-            set { _processemb = value; }
+-        }
+-        public string FeederID
+-        {
+-            get { return _feederid; }
+-            set { _feederid = value; }
+-        }
+-        public string TrackToRead
+-        {
+-            get { return _trackToRead; }
+-            set { _trackToRead = value; }
+-        }
+-        public string StackerID
+-        {
+-            get { return _stackerid; }
+-            set { _stackerid = value; }
+-        }
+-        public string Coercivity
+-        {
+-            get { return _coercivity; }
+-            set { _coercivity = value; }
+-        }
+-        public string Tk1
+-        {
+-            get { return _tk1; }
+-            set { _tk1 = value; }
+-        }
+-        public string Tk2
+-        {
+-            get { return _tk2; }
+-            set { _tk2 = value; }
+-        }
+-        public string Tk3
+-        {
+-            get { return _tk3; }
+-            set { _tk3 = value; }
+-        }
+-        public string ReadTrackID
+-        {
+-            get { return _readtrackid; }
+-            set { _readtrackid = value; }
+-        }
+-        public string TipperEnable
+-        {
+-            get { return _tipperenable; }
+-            set { _tipperenable = value; }
+-        }
+-        public string[] EmbossLineFont
+-        {
+-            get { return _embosslinefont; }
+-            set { _embosslinefont = value; }
+-        }
+-        public string[] EmbossLineCpi
+-        {
+-            get { return _embosslinecpi; }
+-            set { _embosslinecpi = value; }
+-        }
+-        public string[] EmbossLineX
+-        {
+-            get { return _embosslinex; }
+-            set { _embosslinex = value; }
+-        }
+-        public string[] EmbossLineY
+-        {
+-            get { return _embossliney; }
+-            set { _embossliney = value; }
+-        }
+-        public string[] EmbossLineText
+-        {
+-            get { return _embosslinetext; }
+-            set { _embosslinetext = value; }
+-        }
+-        #endregion
+-
+-        #region Constructors
+-        public CardData()
+-        {
+-            ClearCardData();
+-        }
+-        #endregion
+-
+-        #region Methods
+-        public void addEmbossBufferLine(int Index, string EmbFont, string EmbCpi, string EmbX, string EmbY, string EmbText)
+-        {
+-            if (Index < MaxEmbLine)
+-            {
+-                _embosslinefont[Index] = EmbFont;
+-                _embosslinecpi[Index] = EmbCpi;
+-                _embosslinex[Index] = EmbX;
+-                _embossliney[Index] = EmbY;
+-                _embosslinetext[Index] = EmbText;
+-            }
+-        }
+-
+-        /// <summary>
+-        /// to Clear the data structure
+-        /// </summary>
+-        public void ClearCardData()
+-        {
+-            _processmag = string.Empty;
+-            _processemb = string.Empty;
+-            _feederid = string.Empty;
+-            _stackerid = string.Empty;
+-
+-            _trackToRead = string.Empty;
+-            _coercivity = string.Empty;
+-            _tk1 = string.Empty;
+-            _tk2 = string.Empty;
+-            _tk3 = string.Empty;
+-
+-            for (int i = 0; i < MaxEmbLine; i++)
+-            {
+-                _embosslinefont[i] = string.Empty;
+-                _embosslinecpi[i] = string.Empty;
+-                _embosslinex[i] = string.Empty;
+-                _embossliney[i] = string.Empty;
+-                _embosslinetext[i] = string.Empty;
+-            }
+-        }
+-
+-        /// <summary>
+-        /// To Print the data structure
+-        /// </summary>
+-        /// <returns></returns>
+-        public string CardDataText()
+-        {
+-            StringBuilder sb = new StringBuilder();
+-
+-            sb.AppendLine("CARD DATA :");
+-
+-            sb.AppendLine("Process MAG = " + _processmag + ", EMB = " + _processemb);
+-            sb.AppendLine("Load from Feeder = " + _feederid + " and Eject to Stacker = " + _stackerid);
+-            sb.AppendLine("Track to Read = " + _trackToRead);
+-
+-            string sCoercivity;
+-            if (_coercivity == "1")
+-                sCoercivity = "MAG LOCO";
+-            else if (_coercivity == "2")
+-                sCoercivity = "MAG HICO";
+-            else
+-                sCoercivity = "MAG Coercitivity Not Set";
+-
+-            sb.AppendLine(sCoercivity);
+-            sb.AppendLine("TK1 = " + _tk1);
+-            sb.AppendLine("TK2 = " + _tk2);
+-            sb.AppendLine("TK3 = " + _tk3);
+-
+-            sb.AppendLine("MaxEmbLine = " + _maxEmbLine);
+-            for (int i = 0; i < MaxEmbLine; i++)
+-            {
+-                if (_embosslinex[i] == string.Empty) break;
+-
+-                sb.Append("EmbLine" + (i + 1) + " = ");
+-                sb.Append("F" + _embosslinefont[i] + " ");
+-                sb.Append("CS" + _embosslinecpi[i] + " ");
+-                sb.Append("X" + _embosslinex[i] + " ");
+-                sb.Append("Y" + _embossliney[i] + " ");
+-                sb.AppendLine(" " + _embosslinetext[i]);
+-            }
+-
+-            return sb.ToString();
+-        }
+-
+-        #endregion
+-    }
+     public class MachineResponse
+     {
+         [JsonProperty("Answer")]
+@@ -310,87 +97,6 @@ namespace MATICA_S3300e.LAN
+     /// anything beyond the three confirmed fields (see the Matica patch notes).
+     /// </summary>
+    
+-    public class MachineConnectionClass
+-    {
+-        #region Declarations
+-        private string _ip;
+-        private string _port;
+-        #endregion
+-
+-        #region Properties
+-        public string ip
+-        {
+-            get { return _ip; }
+-            set { _ip = value; }
+-        }
+-        public string port
+-        {
+-            get { return _port; }
+-            set { _port = value; }
+-        }
+-        #endregion
+-
+-        #region Constructors
+-        public MachineConnectionClass()
+-        {
+-            //_ip = "192.168.70.70:33200";
+-            _ip = "10.20.50.233";
+-            _port = "33200";
+-        }
+-        #endregion
+-
+-        #region Methods
+-        public string MachineIP()
+-        {
+-            if (_ip != string.Empty && _port != string.Empty)
+-                return _ip + ":" + _port;
+-            else
+-                return "10.20.50.233";
+-
+-        }
+-        #endregion
+-    }
+-    public class ActionClass
+-    {
+-        #region Declarations
+-        private string _action;
+-        private bool _check;
+-        #endregion
+-
+-        #region Properties
+-        public string sAction
+-        {
+-            get { return _action; }
+-            set { _action = value; }
+-        }
+-        public bool ActionCheckError
+-        {
+-            get { return _check; }
+-            set { _check = value; }
+-        }
+-        #endregion
+-
+-        #region Constructors
+-        public ActionClass()
+-        {
+-            _action = "action";
+-            _check = false;
+-        }
+-        #endregion
+-
+-        #region Methods
+-        public void ActionCheck()
+-        {
+-            _check = false;
+-
+-            if (_action != "action" && _action != "echo")
+-            {
+-                _action = "action";
+-                _check = true;
+-            }
+-        }
+-        #endregion
+-    }
+     // =============================== Command Classes
+     public class LoadCardClass
+     {
+@@ -451,77 +157,6 @@ namespace MATICA_S3300e.LAN
+         #endregion
+     }
+ 
+-    public class MagData
+-    {
+-        #region Declarations
+-        private string _coercivity;
+-        private string _tk1;
+-        private string _tk2;
+-        private string _tk3;
+-        #endregion
+-
+-        #region Properties
+-        public string coercivity
+-        {
+-            get { return _coercivity; }
+-            set { _coercivity = value; }
+-        }
+-        public string tk1
+-        {
+-            get { return _tk1; }
+-            set { _tk1 = value; }
+-        }
+-        public string tk2
+-        {
+-            get { return _tk2; }
+-            set { _tk2 = value; }
+-        }
+-        public string tk3
+-        {
+-            get { return _tk3; }
+-            set { _tk3 = value; }
+-        }
+-        #endregion
+-
+-        #region Constructors
+-        public MagData(string coercivity, string tk1, string tk2, string tk3)
+-        {
+-            _coercivity = coercivity;
+-            _tk1 = tk1;
+-            _tk2 = tk2;
+-            _tk3 = tk3;
+-        }
+-        #endregion
+-    }
+-    public class WriteMAGClass
+-    {
+-        #region Declarations
+-        private string _command;
+-        private MagData _magdata;
+-        #endregion
+-
+-        #region Properties
+-        public string Command
+-        {
+-            get { return _command; }
+-            set { _command = value; }
+-        }
+-
+-        public MagData MagData
+-        {
+-            get { return _magdata; }
+-            set { _magdata = value; }
+-        }
+-        #endregion
+-
+-        #region Constructors
+-        public WriteMAGClass(string command, string coercivity, string tk1, string tk2, string tk3)
+-        {
+-            _command = command;
+-            _magdata = new MagData(coercivity, tk1, tk2, tk3);
+-        }
+-        #endregion
+-    }
+     public class ReadMAGClass
+     {
+         #region Declarations
+@@ -664,119 +299,6 @@ namespace MATICA_S3300e.LAN
+         #endregion
+     }
+ 
+-    public class CoverOpenClass
+-    {
+-        #region Declarations
+-        private string _command;
+-        private string _parameter;
+-        #endregion
+-
+-        #region Properties
+-        public string Command
+-        {
+-            get { return _command; }
+-            set { _command = value; }
+-        }
+-        public string Parameter
+-        {
+-            get { return _parameter; }
+-            set { _parameter = value; }
+-        }
+-        #endregion
+-
+-        #region Constructors
+-        public CoverOpenClass(string command, string parameter)
+-        {
+-            Command = command;
+-            Parameter = parameter;
+-        }
+-        #endregion
+-    }
+-    public class MoveToChipClass
+-    {
+-        #region Declarations
+-        private string _command;
+-        private string _chip_station;
+-        #endregion
+-
+-        #region Properties
+-        public string Command
+-        {
+-            get { return _command; }
+-            set { _command = value; }
+-        }
+-        public string Chip_Station
+-        {
+-            get { return _chip_station; }
+-            set { _chip_station = value; }
+-        }
+-        #endregion
+-
+-        #region Constructors
+-        public MoveToChipClass(string command, string chip_station)
+-        {
+-            _command = command;
+-            _chip_station = chip_station;
+-        }
+-        #endregion
+-    }
+-    public class ChipResetClass
+-    {
+-        #region Declarations
+-        private string _command;
+-        private string _unpower;
+-        #endregion
+-
+-        #region Properties
+-        public string Command
+-        {
+-            get { return _command; }
+-            set { _command = value; }
+-        }
+-        public string Unpower
+-        {
+-            get { return _unpower; }
+-            set { _unpower = value; }
+-        }
+-        #endregion
+-
+-        #region Constructors
+-        public ChipResetClass(string command, string unpower)
+-        {
+-            _command = command;
+-            _unpower = unpower;
+-        }
+-        #endregion
+-    }
+-
+-    public class ApduExchangeClass
+-    {
+-        #region Declarations
+-        private string _command;
+-        private string _apdu;
+-        #endregion
+-
+-        #region Properties
+-        public string Command
+-        {
+-            get { return _command; }
+-            set { _command = value; }
+-        }
+-        public string APDU
+-        {
+-            get { return _apdu; }
+-            set { _apdu = value; }
+-        }
+-        #endregion
+-
+-        #region Constructors
+-        public ApduExchangeClass(string command, string apdu)
+-        {
+-            _command = command;
+-            _apdu = apdu;
+-        }
+-        #endregion
+-    }
+     public class AnswerClass
+     {
+         #region Declarations
+diff --git a/invetoryBackGroundServices/lan/MachineCommands.cs b/invetoryBackGroundServices/lan/MachineCommands.cs
+deleted file mode 100644
+index c1088cf..0000000
+--- a/invetoryBackGroundServices/lan/MachineCommands.cs
++++ /dev/null
+@@ -1,799 +0,0 @@
+-﻿
+-using Newtonsoft.Json;
+-using Newtonsoft.Json.Serialization;
+-using System;
+-using System.Collections.Generic;
+-using System.IO;
+-using System.Net;
+-using System.Net.NetworkInformation;
+-using System.Net.Sockets;
+-using System.Text;
+-
+-namespace MATICA_S3300e.LAN
+-{
+-    public class MachineCommands
+-    {
+-        #region Declarations
+-        //classes
+-        private ActionClass _action;
+-        private MachineConnectionClass _connectioninfo;
+-        private MachineInfoJSON _machineinfo;
+-        private CardData _data;
+-        private Logger _log;
+-        //private
+-        private string JsonCommand;
+-        private int reply;
+-        //public
+-        public string sReadMAGData;
+-        public string sChip;
+-
+-        #endregion
+-
+-        #region Properties
+-        public ActionClass httpAction
+-        {
+-            get { return _action; }
+-            set { _action = value; }
+-        }
+-        public MachineConnectionClass ConnectionInfo
+-        {
+-            get { return _connectioninfo; }
+-            set { _connectioninfo = value; }
+-        }
+-        public MachineInfoJSON MachineInfo
+-        {
+-            get { return _machineinfo; }
+-            set { _machineinfo = value; }
+-        }
+-        public CardData Data
+-        {
+-            get { return _data; }
+-            set { _data = value; }
+-        }
+-        #endregion
+-
+-        #region Constructors
+-      
+-        public MachineCommands(ActionClass action, MachineConnectionClass conn, MachineInfoJSON info, CardData data, Logger log)
+-        {
+-            _action = action;
+-            _connectioninfo = conn;
+-            _machineinfo = info;
+-            _data = data;
+-            _log = log;
+-        }
+-        #endregion
+-
+-        #region Enum
+-        public enum Commands
+-        {
+-            GetInfo,
+-            GetInfoJson,
+-            Restore,
+-            Emboss,
+-            CoverOpen,
+-
+-            LoadCard,
+-            EjectCard,
+-            RetractCard, //??
+-            RejectCard,
+-
+-            WriteMAG,
+-            ReadMAG,
+-
+-            MoveToChip,
+-            MoveToCLess,
+-            ChipReset,
+-            ApduExchange
+-        }
+-        #endregion
+-
+-        #region Methods ...
+-
+-        #region CommandManagement
+-        public int CommandManagement(Commands Command, ref string sMessage)
+-        {
+-            reply = 0;
+-            JsonCommand = string.Empty;
+-            EjectCardClass EjectCommand;
+-
+-            try
+-            {
+-                switch (Command)
+-                {
+-                    case Commands.GetInfo:
+-                        #region GetInfo
+-
+-                        JsonCommand = "{\"Command\":\"" + Command.ToString() + "\"}"; //string with command to send
+-                        _log.AppendLog("Command >> " + JsonCommand, Logger.LogType.Info);
+-
+-                        reply = httpPOST(JsonCommand, Command.ToString(), ref sMessage); // 4 parameters (Machine ip + port, json command (obj serialized), command name, sMessage)
+-
+-                        if (httpAction.sAction != "echo")
+-                        {
+-                            // Matica Print Flow, status-parsing fix: this used to call
+-                            // `Parser.GetInfoParsing(sMessage, ref _machineinfo)`, commented out
+-                            // and left dead - no `Parser` class exists anywhere in this codebase
+-                            // (confirmed by repeated search), so the retry loop that wrapped it
+-                            // never actually parsed anything and never actually failed either.
+-                            // Replaced with real structured deserialization into MachineInfoJSON
+-                            // (see CardDataBean.cs's [JsonProperty] additions) instead of leaving
+-                            // sMessage as raw text for the caller to string-match against.
+-                            try
+-                            {
+-                                _machineinfo = JsonConvert.DeserializeObject<MachineInfoJSON>(sMessage);
+-                            }
+-                            catch (JsonException)
+-                            {
+-                                _log.AppendLog("GetInfo parsing failed!", Logger.LogType.Error);
+-                                return -1;
+-                            }
+-                        }
+-
+-                        #endregion
+-                        break;
+-                    case Commands.GetInfoJson:
+-                        #region GetInfoJson
+-
+-                        JsonCommand = "{\"Command\":\"" + Command.ToString() + "\"}"; //string with command to send
+-
+-                        _log.AppendLog("Command >> " + JsonCommand, Logger.LogType.Info);
+-
+-                        reply = httpPOSTGetInfoJson(JsonCommand, ref sMessage);
+-                        //reply = httpPOST(JsonCommand, Command.ToString(), ref sMessage);
+-
+-                        #endregion
+-                        break;
+-
+-                    case Commands.Restore:
+-                        #region Restore
+-
+-                        JsonCommand = "{\"Command\":\"" + Command.ToString() + "\"}"; //string with command to send
+-                        _log.AppendLog("Command >> " + JsonCommand, Logger.LogType.Info);
+-
+-                        reply = httpPOST(JsonCommand, Command.ToString(), ref sMessage);
+-
+-                        #endregion
+-                        break;
+-
+-                    case Commands.CoverOpen: //TODO
+-                        #region CoverOpen
+-
+-                        //CoverOpenClass CoverOpenCommand = new CoverOpenClass(Command.ToString(), "0");
+-
+-
+-                        //JsonCommand = new JavaScriptSerializer().Serialize(CoverOpenCommand); //serialize the obj into a string to send
+-                        //_log.AppendLog("Command >> " + JsonCommand, Logger.LogType.Info);
+-
+-                        //reply = httpPOST(JsonCommand, CoverOpenCommand.Command, ref sMessage);
+-
+-                        CoverOpenClass CoverOpenCommand = new CoverOpenClass(Command.ToString(), "0");
+-
+-                        JsonCommand = JsonConvert.SerializeObject(
+-                            CoverOpenCommand,
+-                            new JsonSerializerSettings
+-                            {
+-                                ContractResolver = new DefaultContractResolver(), 
+-                                Formatting = Formatting.None
+-                            });
+-
+-                        _log.AppendLog("Command >> " + JsonCommand, Logger.LogType.Info);
+-
+-                        reply = httpPOST(JsonCommand, CoverOpenCommand.Command, ref sMessage);
+-
+-
+-                        #endregion
+-                        break;
+-
+-                    case Commands.LoadCard:
+-                        #region LoadCard
+-
+-                        LoadCardClass LoadCommand = new LoadCardClass(Command.ToString(), Data.FeederID);
+-
+-                        //JsonCommand = new JavaScriptSerializer().Serialize(LoadCommand); //serialize the obj into a string to send
+-                        JsonCommand = JsonConvert.SerializeObject(
+-                            LoadCommand,
+-                            new JsonSerializerSettings
+-                            {
+-                                ContractResolver = new DefaultContractResolver(),
+-                                Formatting = Formatting.None
+-                            });
+-                        _log.AppendLog("Command >> " + JsonCommand, Logger.LogType.Info);
+-
+-                        reply = httpPOST(JsonCommand, LoadCommand.Command, ref sMessage);
+-
+-                        #endregion
+-                        break;
+-
+-                    case Commands.EjectCard:
+-                        #region EjectCard
+-
+-                        EjectCommand = new EjectCardClass(Command.ToString(), Data.StackerID);
+-
+-                        //JsonCommand = new JavaScriptSerializer().Serialize(EjectCommand); //serialize the obj into a string to send
+-
+-                        JsonCommand = JsonConvert.SerializeObject(
+-                         EjectCommand,
+-                         new JsonSerializerSettings
+-                         {
+-                             ContractResolver = new DefaultContractResolver(),
+-                             Formatting = Formatting.None
+-                         });
+-                        _log.AppendLog("Command >> " + JsonCommand, Logger.LogType.Info);
+-
+-                        reply = httpPOST(JsonCommand, EjectCommand.Command, ref sMessage);
+-
+-                        #endregion
+-                        break;
+-
+-                    case Commands.RejectCard:
+-                        #region RejectCard
+-
+-                        EjectCommand = new EjectCardClass(Commands.EjectCard.ToString(), "-1");
+-
+-                        //JsonCommand = new JavaScriptSerializer().Serialize(EjectCommand); //serialize the obj into a string to send
+-                        JsonCommand = JsonConvert.SerializeObject(
+-                            EjectCommand,
+-                            new JsonSerializerSettings
+-                            {
+-                                ContractResolver = new DefaultContractResolver(),
+-                                Formatting = Formatting.None
+-                            });
+-
+-                        _log.AppendLog("Command >> " + JsonCommand, Logger.LogType.Info);
+-
+-                        reply = httpPOST(JsonCommand, EjectCommand.Command, ref sMessage);
+-
+-                        #endregion
+-                        break;
+-
+-                    case Commands.RetractCard: //TODO
+-                        #region RetractCard
+-
+-                        JsonCommand = "{\"Command\":\"" + Command.ToString() + "\"}";
+-                        _log.AppendLog("Command >> " + JsonCommand, Logger.LogType.Info);
+-
+-                        reply = httpPOST(JsonCommand, Command.ToString(), ref sMessage);
+-
+-                        #endregion
+-                        break;
+-
+-                    case Commands.WriteMAG:
+-                        #region WriteMag
+-
+-                        WriteMAGClass WriteMAGCommand = new WriteMAGClass(Command.ToString(),
+-                                                                          Data.Coercivity,
+-                                                                          Data.Tk1,
+-                                                                          Data.Tk2,
+-                                                                          Data.Tk3);
+-
+-                        //JsonCommand = new JavaScriptSerializer().Serialize(WriteMAGCommand); //serialize the obj into a string to send
+-
+-                           JsonCommand = JsonConvert.SerializeObject(
+-                            WriteMAGCommand,
+-                            new JsonSerializerSettings
+-                            {
+-                                ContractResolver = new DefaultContractResolver(),
+-                                Formatting = Formatting.None
+-                            });
+-                        _log.AppendLog("Command >> " + JsonCommand, Logger.LogType.Info);
+-
+-                        reply = httpPOST(JsonCommand, WriteMAGCommand.Command, ref sMessage);
+-
+-                        #endregion
+-                        break;
+-
+-                    case Commands.Emboss:
+-                        #region Emboss
+-
+-                        List<EmbossLine> EmbossList = new List<EmbossLine>();
+-
+-                        for (int nr = 0; nr < CardData.MaxEmbLine; nr++)
+-                        {
+-                            if (Data.EmbossLineText[nr].Length > 0)
+-                                EmbossList.Add(new EmbossLine(Data.EmbossLineFont[nr], Data.EmbossLineCpi[nr], Data.EmbossLineX[nr], Data.EmbossLineY[nr], Data.EmbossLineText[nr]));
+-                        }
+-
+-                        EmbossLineClass EmbossCommand = new EmbossLineClass(Command.ToString(), EmbossList, Data.TipperEnable,
+-                            CLS.Machine_Configuration._TIPTEMP.ToString(), CLS.Machine_Configuration._TIPPRES.ToString(),
+-                            CLS.Machine_Configuration._TIPCONS.ToString(), CLS.Machine_Configuration._TIPTIME.ToString());
+-
+-                        //JsonCommand = new JavaScriptSerializer().Serialize(EmbossCommand); //serialize the obj into a string to send
+-                        JsonCommand = JsonConvert.SerializeObject(
+-                            EmbossCommand,
+-                            new JsonSerializerSettings
+-                            {
+-                                ContractResolver = new DefaultContractResolver(),
+-                                Formatting = Formatting.None
+-                            });
+-                        _log.AppendLog("Command >> " + JsonCommand, Logger.LogType.Info);
+-
+-                        reply = httpPOST(JsonCommand, EmbossCommand.Command, ref sMessage);
+-
+-                        #endregion
+-                        break;
+-
+-                    case Commands.ReadMAG:
+-                        #region ReadMag
+-
+-                        ReadMAGClass ReadMAGCommand = new ReadMAGClass(Command.ToString(), Data.ReadTrackID);
+-
+-                        //JsonCommand = new JavaScriptSerializer().Serialize(ReadMAGCommand); //serialize the obj into a string to send
+-                        JsonCommand = JsonConvert.SerializeObject(
+-                             ReadMAGCommand,
+-                             new JsonSerializerSettings
+-                             {
+-                                 ContractResolver = new DefaultContractResolver(),
+-                                 Formatting = Formatting.None
+-                             });
+-                        _log.AppendLog("Command >> " + JsonCommand, Logger.LogType.Info);
+-
+-                        reply = httpPOST(JsonCommand, ReadMAGCommand.Command, ref sMessage);
+-
+-                        #endregion
+-                        break;
+-
+-                    case Commands.MoveToChip:
+-                        #region MoveToChip
+-
+-                        sChip = string.Empty;
+-                        ApduExchangeClass APDUCommand;
+-
+-                        #region MoveToChip
+-                        MoveToChipClass ChipCommand = new MoveToChipClass(Command.ToString(), "1");
+-
+-                        //JsonCommand = new JavaScriptSerializer().Serialize(ChipCommand); //serialize the obj into a string to send
+-                        JsonCommand = JsonConvert.SerializeObject(
+-                                ChipCommand,
+-                                new JsonSerializerSettings
+-                                {
+-                                    ContractResolver = new DefaultContractResolver(),
+-                                    Formatting = Formatting.None
+-                                });
+-                        _log.AppendLog("Command >> " + JsonCommand, Logger.LogType.Info);
+-
+-                        reply = httpPOST(JsonCommand, ChipCommand.Command, ref sMessage);
+-
+-                        if (ValuateReply(reply)) return -1;
+-
+-                        sChip = ChipCommand.Command + " >> " + sMessage + Environment.NewLine;
+-                        #endregion
+-
+-                        #region ChipReset
+-                        ChipResetClass ChipResetCommand = new ChipResetClass(Commands.ChipReset.ToString(), "N");
+-
+-                        //JsonCommand = new JavaScriptSerializer().Serialize(ChipResetCommand);
+-                        JsonCommand = JsonConvert.SerializeObject(
+-                            ChipResetCommand,
+-                            new JsonSerializerSettings
+-                            {
+-                                ContractResolver = new DefaultContractResolver(),
+-                                Formatting = Formatting.None
+-                            });
+-                        _log.AppendLog("Command >> " + JsonCommand, Logger.LogType.Info);
+-
+-                        reply = httpPOST(JsonCommand, ChipResetCommand.Command, ref sMessage);
+-
+-                        if (ValuateReply(reply)) return -1;
+-
+-                        sChip += ChipResetCommand.Command + " >> " + sMessage + Environment.NewLine;
+-                        #endregion
+-
+-                        #region APDU1
+-                        APDUCommand = new ApduExchangeClass(Commands.ApduExchange.ToString(),
+-                                                            "00A404000E315041592E5359532E4444463031");
+-
+-                        //JsonCommand = new JavaScriptSerializer().Serialize(APDUCommand);
+-
+-                        JsonCommand = JsonConvert.SerializeObject(
+-                            APDUCommand,
+-                            new JsonSerializerSettings
+-                            {
+-                                ContractResolver = new DefaultContractResolver(),
+-                                Formatting = Formatting.None
+-                            });
+-                        _log.AppendLog("Command >> " + JsonCommand, Logger.LogType.Info);
+-
+-                        httpPOST(JsonCommand, APDUCommand.Command, ref sMessage);
+-
+-                        sChip += Environment.NewLine + "APDU1: " + Environment.NewLine;
+-
+-                        if (httpAction.sAction != "echo")
+-                        {
+-                            sChip += "Sent >> " + APDUCommand.APDU + Environment.NewLine;
+-                            sChip += "Received >> ";
+-                        }
+-
+-                        sChip += sMessage + Environment.NewLine;
+-                        #endregion
+-
+-                        #region APDU2
+-                        APDUCommand = new ApduExchangeClass(Commands.ApduExchange.ToString(),
+-                                                            "00c0000022");
+-
+-                        //JsonCommand = new JavaScriptSerializer().Serialize(APDUCommand);
+-                        JsonCommand = JsonConvert.SerializeObject(
+-                            APDUCommand,
+-                            new JsonSerializerSettings
+-                            {
+-                                ContractResolver = new DefaultContractResolver(),
+-                                Formatting = Formatting.None
+-                            });
+-                        _log.AppendLog("Command >> " + JsonCommand, Logger.LogType.Info);
+-
+-                        httpPOST(JsonCommand, APDUCommand.Command, ref sMessage);
+-
+-                        sChip += Environment.NewLine + "APDU2: " + Environment.NewLine;
+-
+-                        if (httpAction.sAction != "echo")
+-                        {
+-                            sChip += "Sent >> " + APDUCommand.APDU + Environment.NewLine;
+-                            sChip += "Received >> ";
+-                        }
+-
+-                        sChip += sMessage + Environment.NewLine;
+-                        #endregion
+-
+-                        #endregion
+-                        break;
+-
+-                    case Commands.MoveToCLess:
+-                        #region MoteToCLess
+-
+-                        sChip = string.Empty;
+-                        ApduExchangeClass APDUComm;
+-
+-                        #region MoveToCless
+-                        MoveToChipClass CLessCommand = new MoveToChipClass(Commands.MoveToChip.ToString(), "2");
+-
+-                        //JsonCommand = new JavaScriptSerializer().Serialize(CLessCommand); //serialize the obj into a string to send
+-                        JsonCommand = JsonConvert.SerializeObject(
+-                        CLessCommand,
+-                        new JsonSerializerSettings
+-                        {
+-                            ContractResolver = new DefaultContractResolver(),
+-                            Formatting = Formatting.None
+-                        });
+-                        _log.AppendLog("Command >> " + JsonCommand, Logger.LogType.Info);
+-
+-                        reply = httpPOST(JsonCommand, CLessCommand.Command, ref sMessage);
+-
+-                        if (ValuateReply(reply)) return -1;
+-
+-                        sChip = CLessCommand.Command + " >> " + sMessage + Environment.NewLine;
+-                        #endregion
+-
+-                        #region APDU1
+-                        APDUComm = new ApduExchangeClass(Commands.ApduExchange.ToString(),
+-                                                            "00A404000E315041592E5359532E4444463031");
+-
+-                        //JsonCommand = new JavaScriptSerializer().Serialize(APDUComm);
+-                        JsonCommand = JsonConvert.SerializeObject(
+-                            APDUComm,
+-                            new JsonSerializerSettings
+-                            {
+-                                ContractResolver = new DefaultContractResolver(),
+-                                Formatting = Formatting.None
+-                            });
+-                        _log.AppendLog("Command >> " + JsonCommand, Logger.LogType.Info);
+-
+-                        httpPOST(JsonCommand, APDUComm.Command, ref sMessage);
+-
+-                        sChip += Environment.NewLine + "APDU1: " + Environment.NewLine;
+-
+-                        if (httpAction.sAction != "echo")
+-                        {
+-                            sChip += "Sent >> " + APDUComm.APDU + Environment.NewLine;
+-                            sChip += "Received >> ";
+-                        }
+-
+-                        sChip += sMessage + Environment.NewLine;
+-                        #endregion
+-
+-                        #region APDU2
+-                        APDUComm = new ApduExchangeClass(Commands.ApduExchange.ToString(),
+-                                                            "00c0000022");
+-
+-                        //JsonCommand = new JavaScriptSerializer().Serialize(APDUComm);
+-                        JsonCommand = JsonConvert.SerializeObject(
+-                            APDUComm,
+-                            new JsonSerializerSettings
+-                            {
+-                                ContractResolver = new DefaultContractResolver(),
+-                                Formatting = Formatting.None
+-                            });
+-                        _log.AppendLog("Command >> " + JsonCommand, Logger.LogType.Info);
+-
+-                        httpPOST(JsonCommand, APDUComm.Command, ref sMessage);
+-
+-                        sChip += Environment.NewLine + "APDU2: " + Environment.NewLine;
+-
+-                        if (httpAction.sAction != "echo")
+-                        {
+-                            sChip += "Sent >> " + APDUComm.APDU + Environment.NewLine;
+-                            sChip += "Received >> ";
+-                        }
+-
+-                        sChip += sMessage + Environment.NewLine;
+-                        #endregion
+-
+-                        #endregion
+-                        break;
+-                }
+-
+-                return reply;
+-            }
+-            catch (Exception ex)
+-            {
+-                sMessage = ex.Message;
+-                _log.AppendLog(ex.Message, Logger.LogType.Error);
+-                return -1;
+-                // if the server returns a 500 error than the webRequest.GetResponse() method
+-                // throws an exception and all I get is "The remote server returned an error: (500)."
+-            }
+-        }
+-        public int SendCustomCommand(string Command, ref string sMessage)
+-        {
+-            try
+-            {
+-                int reply = httpPOST(Command, null, ref sMessage);
+-
+-                return reply;
+-            }
+-            catch (Exception ex)
+-            {
+-                sMessage = ex.Message;
+-                return -1;
+-            }
+-        }
+-        #endregion
+-
+-        #region httpPost
+-        /// <summary>
+-        /// function to communicate with raspberry via http POST
+-        /// </summary>
+-        /// <param name="JsonCommand"></param>
+-        /// <param name="CommandName"></param>
+-        /// <param name="sMessage"></param>
+-        /// <returns>return '-1' in case of any error or '0' if OK</returns>
+-        private int httpPOST(string JsonCommand, string CommandName, ref string sMessage)
+-        {
+-           
+-            
+-
+-            ServicePointManager.Expect100Continue = true;
+-            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls
+-               | SecurityProtocolType.Tls11
+-               | SecurityProtocolType.Tls12;
+-
+-
+-            //define the request (url, content type and method)
+-            var httpWebRequest = (HttpWebRequest)WebRequest.Create("https://" + ConnectionInfo.MachineIP() + "/" + httpAction.sAction);
+-            //var httpWebRequest = (HttpWebRequest)WebRequest.Create("https://172.30.240.155:33200/action");
+-
+-            //set timeout
+-            //httpWebRequest.Timeout = 10000; //10 Seconds
+-
+-            httpWebRequest.ContentType = "application/json";
+-            httpWebRequest.Method = "POST";
+-
+-            //function to accept the certificate
+-            httpWebRequest.ServerCertificateValidationCallback += ((sender, certificate, chain, sslPolicyErrors) => true);
+-            //JsonCommand = "{\"Command\":\"LoadCard\",\"Feeder_ID\":\"0\"}";
+-            string utf8String = string.Empty;
+-
+-            // Get UTF16 bytes and convert UTF16 bytes to UTF8 bytes
+-            byte[] utf16Bytes = Encoding.Unicode.GetBytes(JsonCommand);
+-            byte[] utf8Bytes = Encoding.Convert(Encoding.Unicode, Encoding.UTF8, utf16Bytes);
+-
+-            // Fill UTF8 bytes inside UTF8 string
+-            for (int i = 0; i < utf8Bytes.Length; i++)
+-            {
+-                // Because char always saves 2 bytes, fill char with 0
+-                byte[] utf8Container = new byte[2] { utf8Bytes[i], 0 };
+-                utf8String += BitConverter.ToChar(utf8Container, 0);
+-            }
+-
+-            using (var streamWriter = new StreamWriter(httpWebRequest.GetRequestStream()))
+-            {
+-                streamWriter.Write(utf8String); //write the data to the url passed to the .create method
+-            }
+-
+-            var httpResponse = (HttpWebResponse)httpWebRequest.GetResponse(); //wait for response (if it doesn't get it after a while it goes into timeout)
+-
+-            using (var streamReader = new StreamReader(httpResponse.GetResponseStream()))
+-            {
+-                string Answer = streamReader.ReadToEnd(); //contains the response
+-
+-                AnswerClass JsonAnswer = new AnswerClass();
+-
+-                // Matica Print Flow, dead-code pass: was Nancy.Json's JavaScriptSerializer, the
+-                // last real use of the Nancy package in this codebase. JsonConvert is already used
+-                // for every outbound serialization in this same file; AnswerClass's plain
+-                // PascalCase properties (Answer/Data/Error) match Newtonsoft's default
+-                // case-insensitive matching identically, so this is a behavior-preserving swap.
+-                JsonAnswer = JsonConvert.DeserializeObject<AnswerClass>(Answer);
+-
+-                _log.AppendLog("Response << " + Answer, Logger.LogType.Info);
+-
+-                if (httpAction.sAction == "echo")
+-                {
+-                    sMessage = Answer;
+-                    return 0;
+-                }
+-
+-                if (JsonAnswer.Answer == "KO") //in case of error "Answer":"KO"
+-                {
+-                    sMessage = "Error: " + "Group: " + JsonAnswer.Error.group + ", ErrNumber: " + JsonAnswer.Error.code + " - " + JsonAnswer.Error.message;
+-                    return -1;
+-                }
+-
+-                if (CommandName != null)
+-                {
+-                    sMessage = CommandName + " " + JsonAnswer.Answer;
+-
+-                    if (CommandName == Commands.ReadMAG.ToString())
+-                        sReadMAGData = JsonAnswer.Data; //save the MAG
+-
+-                    if (CommandName == Commands.GetInfo.ToString())
+-                        sMessage = JsonAnswer.Data; //save the data to parsalize
+-
+-                    if (CommandName == Commands.MoveToChip.ToString() ||
+-                        CommandName == Commands.ChipReset.ToString() ||
+-                        CommandName == Commands.ApduExchange.ToString())
+-                    {
+-                        if (JsonAnswer.Data == string.Empty)
+-                        {
+-                            sMessage = "No ATR";
+-                            return -1;
+-                        }
+-                        else
+-                            sMessage = JsonAnswer.Data; //save chip data
+-                    }
+-                }
+-                else
+-                {
+-                    sMessage = Answer;
+-                }
+-
+-                return 0;
+-            }
+-        }
+-        private int httpPOSTGetInfoJson(string JsonCommand, ref string sMessage)
+-        {
+-            ServicePointManager.Expect100Continue = true;
+-            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls
+-               | SecurityProtocolType.Tls11
+-               | SecurityProtocolType.Tls12;
+-
+-            //define the request (url, content type and method)
+-            var httpWebRequest = (HttpWebRequest)WebRequest.Create("https://" + ConnectionInfo.ip + ":33201" + "/" + httpAction.sAction);
+-
+-            //set timeout
+-            httpWebRequest.Timeout = 10000; //10 Seconds
+-
+-            httpWebRequest.ContentType = "application/json";
+-            httpWebRequest.Method = "POST";
+-
+-            //function to accept the certificate
+-            httpWebRequest.ServerCertificateValidationCallback += ((sender, certificate, chain, sslPolicyErrors) => true);
+-
+-            string utf8String = string.Empty;
+-
+-            // Get UTF16 bytes and convert UTF16 bytes to UTF8 bytes
+-            byte[] utf16Bytes = Encoding.Unicode.GetBytes(JsonCommand);
+-            byte[] utf8Bytes = Encoding.Convert(Encoding.Unicode, Encoding.UTF8, utf16Bytes);
+-
+-            // Fill UTF8 bytes inside UTF8 string
+-            for (int i = 0; i < utf8Bytes.Length; i++)
+-            {
+-                // Because char always saves 2 bytes, fill char with 0
+-                byte[] utf8Container = new byte[2] { utf8Bytes[i], 0 };
+-                utf8String += BitConverter.ToChar(utf8Container, 0);
+-            }
+-
+-            using (var streamWriter = new StreamWriter(httpWebRequest.GetRequestStream()))
+-            {
+-                streamWriter.Write(utf8String); //write the data to the url passed to the .create method
+-            }
+-
+-            var httpResponse = (HttpWebResponse)httpWebRequest.GetResponse(); //wait for response (if it doesn't get it after a while it goes into timeout)
+-
+-            using (var streamReader = new StreamReader(httpResponse.GetResponseStream()))
+-            {
+-                sMessage = streamReader.ReadToEnd(); //contains the response
+-
+-                return 0;
+-            }
+-        }
+-        #endregion
+-
+-        #region CheckConnection
+-        public int CheckConnection(ref string errorMessage)
+-        {
+-            string ip = ConnectionInfo.ip;
+-            int port = Convert.ToInt32(ConnectionInfo.port);
+-            const int timeout = 3000; //3 secondi di timeout sia per il controllo dell'ip che per la porta 
+-
+-            _log.AppendLog("Check connection..", Logger.LogType.Info);
+-            //check if IP is pingable
+-            #region Ping IP
+-
+-            bool Pingable = false;
+-            Ping _ping = null;
+-
+-            try
+-            {
+-                _ping = new Ping();
+-                PingReply reply = _ping.Send(ip, timeout);
+-                Pingable = reply.Status == IPStatus.Success;
+-                _log.AppendLog(ip + " Pingable >> " + Pingable.ToString(), Logger.LogType.Info);
+-            }
+-            catch (PingException ex)
+-            {
+-                errorMessage = ex.ToString();
+-                // Discard PingExceptions and return -1;
+-            }
+-            finally
+-            {
+-                if (_ping != null)
+-                {
+-                    _ping.Dispose();
+-                }
+-            }
+-
+-            if (!Pingable)
+-            {
+-                errorMessage = "Unable to Ping the IP " + ip;
+-                _log.AppendLog(errorMessage, Logger.LogType.Error);
+-                return -1;
+-            }
+-            #endregion
+-
+-            //check if port is closed or blocked
+-            #region Check Port
+-            try
+-            {
+-                using (var client = new TcpClient())
+-                {
+-                    var result = client.BeginConnect(ip, port, null, null);
+-                    var success = result.AsyncWaitHandle.WaitOne(timeout);
+-                    if (!success)
+-                    {
+-                        errorMessage = "Connection error! Port " + Convert.ToString(port) + " closed or blocked.";
+-                        _log.AppendLog(errorMessage, Logger.LogType.Error);
+-                        return -1;
+-                    }
+-
+-                    _log.AppendLog(ip + ":" + port + " connection >> " + success.ToString(), Logger.LogType.Info);
+-                    client.EndConnect(result);
+-                }
+-
+-            }
+-            catch
+-            {
+-                errorMessage = "Connection error! Port closed or blocked.";
+-                _log.AppendLog(errorMessage, Logger.LogType.Error);
+-                return -1;
+-            }
+-            #endregion
+-
+-            return 0;
+-        }
+-        #endregion
+-
+-        #region ValuateReply
+-        /// <summary>
+-        /// Valuate Reply 
+-        /// <br> return true if Reply != 0 </br>
+-        /// </summary>
+-        /// <param name="Reply"></param>
+-        /// <returns></returns>
+-        public bool ValuateReply(int Reply)
+-        {
+-            return (Reply != 0) ? true : false;
+-        }
+-        #endregion
+-        #endregion
+-    }
+-}
+-- 
+2.43.0
+

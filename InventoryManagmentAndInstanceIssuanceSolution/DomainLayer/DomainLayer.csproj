@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- Swagger enhancement (Phase S1): enum member docs (Active/Inactive/etc.) live here and
+         are read by EnumSchemaDescriptionsFilter to annotate Swagger's enum schemas. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Folder Include="Value Objects\" />
+  </ItemGroup>
+
+</Project>

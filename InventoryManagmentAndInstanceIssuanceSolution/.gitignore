@@ -1,0 +1,43 @@
+﻿################################################################################
+# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
+################################################################################
+
+/.vs/InventoryManagmentAndInstanceIssuanceSolution/CopilotIndices/17.14.1681.23550/CodeChunks.db-wal
+/.vs/InventoryManagmentAndInstanceIssuanceSolution/CopilotIndices/17.14.1681.23550/SemanticSymbols.db
+/.vs/InventoryManagmentAndInstanceIssuanceSolution/CopilotIndices/17.14.1681.23550/SemanticSymbols.db-shm
+/.vs/InventoryManagmentAndInstanceIssuanceSolution/CopilotIndices/17.14.1681.23550/SemanticSymbols.db-wal
+/.vs/InventoryManagmentAndInstanceIssuanceSolution/DesignTimeBuild/.dtbcache.v2
+/.vs/InventoryManagmentAndInstanceIssuanceSolution/FileContentIndex/1cc76876-569b-48d1-a4c9-6f911d5b27df.vsidx
+# Build outputs
+bin/
+obj/
+
+# Visual Studio files
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Optional: Also ignore common VS temp files
+*.tmp
+*.cache
+*.log
+*.pidb
+*.psess
+*.vsp
+*.ncrunchproject
+*.ncrunchsolution
+*.ncxproj
+*.ncconf
+*.vspx
+*.sap
+*.dbmdl
+*.jfm
+*.sdm
+*.sdoc
+*.vspscc
+*.vssscc
+*.vsidx
+*.css.map
+*.min.js

@@ -1,0 +1,136 @@
+From 65517f29c4eba6d8df9b1c9ae4c41b3df78736af Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Wed, 19 Aug 2026 09:36:17 +0000
+Subject: [PATCH] Add tipper parameters to MaticaPrinterConfiguration (Matica
+ Print Flow)
+
+Adds TipperTemperature/TipperPressure/TipperConsumption/TipperTime as
+printer-level hardware calibration on MaticaPrinterConfiguration, not on
+MaticaProductPrintConfiguration - these are a property of the physical
+printer, not the product being printed.
+
+Per approved decision: 0 remains the default when not explicitly
+configured, matching a Matica printer's existing behavior exactly (every
+Emboss command today already sends 0 for all four, since nothing in
+either codebase currently sets them). MaticaPrinterConfigRequest defaults
+each to 0 so existing callers are unaffected; MaticaPrinterConfigResponse
+takes no defaults deliberately, so every mapping site must supply real
+values explicitly rather than silently leaving a forgotten field at 0.
+
+Three call sites updated: PrinterConfigurationService.CreateAsync's
+entity construction, UpdateAsync's entity mapping, and the shared Map
+function's response construction. No Fluent API changes needed -
+FeederId/HopperId/RejectedId (same int shape) have none either, per
+AppDbContext.cs's own comment on why (no CHECK constraints on this
+module's plain numeric fields other than FontSize).
+
+Migration not included, per established convention - no dotnet SDK in
+the authoring environment. Run locally:
+  Add-Migration Matica-Print-Flow-Tipper-Parameters
+  Update-Database
+Expect four new nullable-false int columns on MaticaPrinterConfigurations,
+each defaulting to 0.
+---
+ .../DTOs/Printing/PrintingDtos.cs             | 15 +++++++++++---
+ .../Entities/MaticaPrinterConfiguration.cs    | 20 +++++++++++++++++++
+ .../Services/PrinterConfigurationService.cs   | 12 ++++++++++-
+ 3 files changed, 43 insertions(+), 4 deletions(-)
+
+diff --git a/ApplicationLayer/DTOs/Printing/PrintingDtos.cs b/ApplicationLayer/DTOs/Printing/PrintingDtos.cs
+index f1ff99e..85180d6 100644
+--- a/ApplicationLayer/DTOs/Printing/PrintingDtos.cs
++++ b/ApplicationLayer/DTOs/Printing/PrintingDtos.cs
+@@ -9,11 +9,20 @@ namespace ApplicationLayer.DTOs.Printing
+     //  Printers (ERD §6, Printing Module Q-01/Q-09)
+     // =====================================================================================
+ 
+-    /// <summary>Matica-only machine configuration, nested under a printer payload (ERD §6.2).</summary>
+-    public sealed record MaticaPrinterConfigRequest(int FeederId, int HopperId, int RejectedId, string Port);
++    /// <summary>
++    /// Matica-only machine configuration, nested under a printer payload (ERD §6.2). The four
++    /// tipper fields are printer-level hardware calibration (Matica Print Flow, tipper-parameter
++    /// phase) — optional, defaulting to 0 to match <see cref="DomainLayer.Entities.MaticaPrinterConfiguration"/>'s
++    /// own default-0 behavior for a printer that has never had them explicitly configured.
++    /// </summary>
++    public sealed record MaticaPrinterConfigRequest(
++        int FeederId, int HopperId, int RejectedId, string Port,
++        int TipperTemperature = 0, int TipperPressure = 0, int TipperConsumption = 0, int TipperTime = 0);
+ 
+     /// <summary>Matica-only machine configuration as returned to clients (ERD §6.2).</summary>
+-    public sealed record MaticaPrinterConfigResponse(int FeederId, int HopperId, int RejectedId, string Port);
++    public sealed record MaticaPrinterConfigResponse(
++        int FeederId, int HopperId, int RejectedId, string Port,
++        int TipperTemperature, int TipperPressure, int TipperConsumption, int TipperTime);
+ 
+     /// <summary>
+     /// Create payload for <c>POST /api/printers</c> (Printing Module Q-01/Q-09: system-admin
+diff --git a/DomainLayer/Entities/MaticaPrinterConfiguration.cs b/DomainLayer/Entities/MaticaPrinterConfiguration.cs
+index 0494140..b49e10b 100644
+--- a/DomainLayer/Entities/MaticaPrinterConfiguration.cs
++++ b/DomainLayer/Entities/MaticaPrinterConfiguration.cs
+@@ -45,5 +45,25 @@ namespace DomainLayer.Entities
+ 
+         /// <summary>Communication port (e.g. COM port or TCP port) the printer listens on.</summary>
+         public string Port { get; set; } = string.Empty;
++
++        /// <summary>
++        /// Tipper temperature, pressure, consumption and time settings sent with every Emboss
++        /// command by the Matica Printer Agent (Matica Print Flow, tipper-parameter phase).
++        /// Printer-level hardware calibration, not per-product — hence living here rather than on
++        /// <see cref="MaticaProductPrintConfiguration"/>. Default <c>0</c> when not explicitly
++        /// configured is intentional (approved decision): a Matica printer that has never had
++        /// these set should behave exactly as it did before this phase existed, not fail or
++        /// substitute an assumed value.
++        /// </summary>
++        public int TipperTemperature { get; set; }
++
++        /// <summary>Tipper pressure setting. See <see cref="TipperTemperature"/> for the default-0 rationale.</summary>
++        public int TipperPressure { get; set; }
++
++        /// <summary>Tipper consumption setting. See <see cref="TipperTemperature"/> for the default-0 rationale.</summary>
++        public int TipperConsumption { get; set; }
++
++        /// <summary>Tipper time setting. See <see cref="TipperTemperature"/> for the default-0 rationale.</summary>
++        public int TipperTime { get; set; }
+     }
+ }
+diff --git a/InfrastructureLayer/Services/PrinterConfigurationService.cs b/InfrastructureLayer/Services/PrinterConfigurationService.cs
+index 64f83ae..dce200f 100644
+--- a/InfrastructureLayer/Services/PrinterConfigurationService.cs
++++ b/InfrastructureLayer/Services/PrinterConfigurationService.cs
+@@ -137,6 +137,10 @@ namespace InfrastructureLayer.Services
+                         HopperId = request.MaticaConfig.HopperId,
+                         RejectedId = request.MaticaConfig.RejectedId,
+                         Port = request.MaticaConfig.Port,
++                        TipperTemperature = request.MaticaConfig.TipperTemperature,
++                        TipperPressure = request.MaticaConfig.TipperPressure,
++                        TipperConsumption = request.MaticaConfig.TipperConsumption,
++                        TipperTime = request.MaticaConfig.TipperTime,
+                     };
+                     await _unitOfWork.MaticaPrinterConfigs.AddAsync(maticaConfig, cancellationToken);
+                 }
+@@ -224,6 +228,10 @@ namespace InfrastructureLayer.Services
+                     maticaConfig.HopperId = request.MaticaConfig.HopperId;
+                     maticaConfig.RejectedId = request.MaticaConfig.RejectedId;
+                     maticaConfig.Port = request.MaticaConfig.Port;
++                    maticaConfig.TipperTemperature = request.MaticaConfig.TipperTemperature;
++                    maticaConfig.TipperPressure = request.MaticaConfig.TipperPressure;
++                    maticaConfig.TipperConsumption = request.MaticaConfig.TipperConsumption;
++                    maticaConfig.TipperTime = request.MaticaConfig.TipperTime;
+                     _unitOfWork.MaticaPrinterConfigs.Update(maticaConfig);
+                 }
+ 
+@@ -382,7 +390,9 @@ namespace InfrastructureLayer.Services
+             maticaConfig is null
+                 ? null
+                 : new MaticaPrinterConfigResponse(
+-                    maticaConfig.FeederId, maticaConfig.HopperId, maticaConfig.RejectedId, maticaConfig.Port),
++                    maticaConfig.FeederId, maticaConfig.HopperId, maticaConfig.RejectedId, maticaConfig.Port,
++                    maticaConfig.TipperTemperature, maticaConfig.TipperPressure,
++                    maticaConfig.TipperConsumption, maticaConfig.TipperTime),
+             p.IsDeleted,
+             p.CreatedAt,
+             p.UpdatedAt,
+-- 
+2.43.0
+

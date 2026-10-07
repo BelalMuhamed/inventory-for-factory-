@@ -1,0 +1,197 @@
+From bbe7bb96c9e4cefb360c6c2150de29b8f204cf2a Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Tue, 25 Aug 2026 06:37:12 +0000
+Subject: [PATCH] Phase 2: dedicated IpAddress field on
+ MaticaPrinterConfiguration
+
+Per explicit clarification: UniqueNumber stays exactly what it always
+was on the Printer entity - a serial/unique identifier, for both
+printer families - and must never be conflated with a network address.
+The Matica machine's actual IP now gets its own field on
+MaticaPrinterConfiguration, next to Port/FeederId/HopperId, since it's
+the same kind of fact (Matica-only hardware configuration), not
+something Printer (shared with Evolis) should carry.
+
+Confirmed, not assumed, before writing anything: PrintFlowController
+and ProductItemService - the entire print-request/print-result path -
+never reference MaticaPrinterConfiguration at all. There is no code
+path today where print traffic could write to this table, so the "only
+admin configuration may set this" requirement is inherited from an
+already-correctly-enforced boundary (PrinterConfigurationService.
+CreateAsync/UpdateAsync already gate on _currentTenant.IsSystemAdmin),
+not something newly built for this field specifically.
+
+DomainLayer/Entities/MaticaPrinterConfiguration.cs: new IpAddress
+property, required, non-nullable (matches Port's own convention).
+
+DomainLayer/Entities/Printer.cs: UniqueNumber's doc comment corrected -
+it previously read "Serial number for an Evolis printer, or IP address
+for a Matica printer" (the ERD's original wording), which is exactly
+the conflation being undone here. Now states plainly that UniqueNumber
+is a serial/identifier for both families and is not a network address.
+
+ApplicationLayer/DTOs/Printing/PrintingDtos.cs: IpAddress added to both
+MaticaPrinterConfigRequest and MaticaPrinterConfigResponse, positioned
+right after Port. Checked before making this a positional-record change:
+MaticaPrinterConfigRequest is only ever JSON-model-bound (by property
+name, so param order doesn't matter there), and MaticaPrinterConfigResponse
+has exactly one positional construction site in the whole codebase -
+the same PrinterConfigurationService.Map function updated in this same
+patch. No caller anywhere else was at risk of a silent positional shift.
+
+InfrastructureLayer/Services/PrinterConfigurationService.cs: all three
+touch points - CreateAsync's entity construction, UpdateAsync's field
+assignment block, and the shared Map function's response construction.
+
+InfrastructureLayer/Data/AppDbContext.cs: IsRequired().HasMaxLength(45)
+- not an arbitrary number, and not simply copied from Port's 50: 45 is
+the standard maximum length for an IPv6 address's longest textual form,
+the correct precise value for an actual IP column. Confirmed after the
+fact that this exact codebase already uses nvarchar(45) for the
+unrelated AuditLog.IpAddress field (a different concept entirely - the
+calling client's own request IP, not a Matica machine's) - independent
+validation that 45 is already this codebase's own established
+convention for IP columns, not a new one introduced here.
+
+Per your explicit decision (option 2, no backfill): existing Matica
+printer rows will have IpAddress at its default empty string until an
+admin explicitly sets it via an update. No migration data-copy logic
+included, matching that decision exactly. One thing worth flagging for
+whoever runs Add-Migration locally: EF Core's tooling will very likely
+prompt interactively for a default value when adding this NOT NULL
+column to a table that may already have rows - answering with an empty
+string is what makes the generated migration match the option-2
+decision actually made here, rather than accidentally backfilling a
+placeholder value in the migration itself.
+
+Migration not included, per established convention - no dotnet SDK in
+the authoring environment. Run locally:
+  Add-Migration Matica-Print-Flow-Printer-Ip-Address
+  Update-Database
+
+Verified by: a repo-wide grep confirming IpAddress is wired at every
+intended point and nowhere else conflicts with it (the unrelated
+AuditLog.IpAddress and AuditSaveChangesInterceptor's own ip variable
+are different, pre-existing, unaffected code - confirmed by inspection,
+not assumed to be unrelated); a positional-construction-site check on
+both new record fields before deciding it was safe to insert them
+mid-parameter-list; and brace balance across every touched file. No
+dotnet SDK/NuGet access in the authoring environment - please build and
+run the migration locally before merging.
+---
+ ApplicationLayer/DTOs/Printing/PrintingDtos.cs       |  4 ++--
+ DomainLayer/Entities/MaticaPrinterConfiguration.cs   | 12 ++++++++++++
+ DomainLayer/Entities/Printer.cs                      | 12 ++++++++++--
+ InfrastructureLayer/Data/AppDbContext.cs             |  1 +
+ .../Services/PrinterConfigurationService.cs          |  4 +++-
+ 5 files changed, 28 insertions(+), 5 deletions(-)
+
+diff --git a/ApplicationLayer/DTOs/Printing/PrintingDtos.cs b/ApplicationLayer/DTOs/Printing/PrintingDtos.cs
+index 85180d6..aca4544 100644
+--- a/ApplicationLayer/DTOs/Printing/PrintingDtos.cs
++++ b/ApplicationLayer/DTOs/Printing/PrintingDtos.cs
+@@ -16,12 +16,12 @@ namespace ApplicationLayer.DTOs.Printing
+     /// own default-0 behavior for a printer that has never had them explicitly configured.
+     /// </summary>
+     public sealed record MaticaPrinterConfigRequest(
+-        int FeederId, int HopperId, int RejectedId, string Port,
++        int FeederId, int HopperId, int RejectedId, string Port, string IpAddress,
+         int TipperTemperature = 0, int TipperPressure = 0, int TipperConsumption = 0, int TipperTime = 0);
+ 
+     /// <summary>Matica-only machine configuration as returned to clients (ERD §6.2).</summary>
+     public sealed record MaticaPrinterConfigResponse(
+-        int FeederId, int HopperId, int RejectedId, string Port,
++        int FeederId, int HopperId, int RejectedId, string Port, string IpAddress,
+         int TipperTemperature, int TipperPressure, int TipperConsumption, int TipperTime);
+ 
+     /// <summary>
+diff --git a/DomainLayer/Entities/MaticaPrinterConfiguration.cs b/DomainLayer/Entities/MaticaPrinterConfiguration.cs
+index b49e10b..786c347 100644
+--- a/DomainLayer/Entities/MaticaPrinterConfiguration.cs
++++ b/DomainLayer/Entities/MaticaPrinterConfiguration.cs
+@@ -46,6 +46,18 @@ namespace DomainLayer.Entities
+         /// <summary>Communication port (e.g. COM port or TCP port) the printer listens on.</summary>
+         public string Port { get; set; } = string.Empty;
+ 
++        /// <summary>
++        /// The physical Matica machine's actual network IP address — the address used when the
++        /// backend (or, in practice today, the Matica Printer Agent it authorizes) needs to
++        /// communicate with the physical machine. Deliberately separate from
++        /// <see cref="Printer.UniqueNumber"/>, which is the machine's serial/unique identifier and
++        /// nothing else, for both printer families. Admin-managed only, same trust boundary as
++        /// every other field on this entity (<see cref="PrinterId"/>'s own doc comment) — no print
++        /// request, print result, or other runtime traffic writes to this table at all; confirmed
++        /// by inspection, not assumed, before this field was added.
++        /// </summary>
++        public string IpAddress { get; set; } = string.Empty;
++
+         /// <summary>
+         /// Tipper temperature, pressure, consumption and time settings sent with every Emboss
+         /// command by the Matica Printer Agent (Matica Print Flow, tipper-parameter phase).
+diff --git a/DomainLayer/Entities/Printer.cs b/DomainLayer/Entities/Printer.cs
+index 751b1e0..5be5189 100644
+--- a/DomainLayer/Entities/Printer.cs
++++ b/DomainLayer/Entities/Printer.cs
+@@ -55,8 +55,16 @@ namespace DomainLayer.Entities
+         public string Model { get; set; } = string.Empty;
+ 
+         /// <summary>
+-        /// Serial number for an Evolis printer, or IP address for a Matica printer (ERD §6.1:
+-        /// "Serial for evolis / ip for matica"). Unique per tenant among non-deleted rows.
++        /// Serial number / unique hardware identifier for the printer, for both Evolis and Matica
++        /// printers alike. Unique per tenant among non-deleted rows.
++        /// <para>
++        /// Not a network address — a Matica printer's IP address lives on its own dedicated
++        /// <see cref="MaticaPrinterConfiguration.IpAddress"/> field instead. This field's doc
++        /// comment previously read "Serial number for an Evolis printer, or IP address for a
++        /// Matica printer" (matching the ERD's original wording), which conflated two different
++        /// facts about a Matica printer under one property; corrected once <c>IpAddress</c> was
++        /// introduced to hold the network address on its own.
++        /// </para>
+         /// </summary>
+         public string UniqueNumber { get; set; } = string.Empty;
+     }
+diff --git a/InfrastructureLayer/Data/AppDbContext.cs b/InfrastructureLayer/Data/AppDbContext.cs
+index ce069da..24870ca 100644
+--- a/InfrastructureLayer/Data/AppDbContext.cs
++++ b/InfrastructureLayer/Data/AppDbContext.cs
+@@ -878,6 +878,7 @@ namespace InfrastructureLayer.Data
+                 entity.HasKey(m => m.Id);
+ 
+                 entity.Property(m => m.Port).IsRequired().HasMaxLength(50);
++                entity.Property(m => m.IpAddress).IsRequired().HasMaxLength(45);
+ 
+                 entity.HasOne(m => m.Printer)
+                       .WithOne()
+diff --git a/InfrastructureLayer/Services/PrinterConfigurationService.cs b/InfrastructureLayer/Services/PrinterConfigurationService.cs
+index dce200f..f19b458 100644
+--- a/InfrastructureLayer/Services/PrinterConfigurationService.cs
++++ b/InfrastructureLayer/Services/PrinterConfigurationService.cs
+@@ -137,6 +137,7 @@ namespace InfrastructureLayer.Services
+                         HopperId = request.MaticaConfig.HopperId,
+                         RejectedId = request.MaticaConfig.RejectedId,
+                         Port = request.MaticaConfig.Port,
++                        IpAddress = request.MaticaConfig.IpAddress,
+                         TipperTemperature = request.MaticaConfig.TipperTemperature,
+                         TipperPressure = request.MaticaConfig.TipperPressure,
+                         TipperConsumption = request.MaticaConfig.TipperConsumption,
+@@ -228,6 +229,7 @@ namespace InfrastructureLayer.Services
+                     maticaConfig.HopperId = request.MaticaConfig.HopperId;
+                     maticaConfig.RejectedId = request.MaticaConfig.RejectedId;
+                     maticaConfig.Port = request.MaticaConfig.Port;
++                    maticaConfig.IpAddress = request.MaticaConfig.IpAddress;
+                     maticaConfig.TipperTemperature = request.MaticaConfig.TipperTemperature;
+                     maticaConfig.TipperPressure = request.MaticaConfig.TipperPressure;
+                     maticaConfig.TipperConsumption = request.MaticaConfig.TipperConsumption;
+@@ -391,7 +393,7 @@ namespace InfrastructureLayer.Services
+                 ? null
+                 : new MaticaPrinterConfigResponse(
+                     maticaConfig.FeederId, maticaConfig.HopperId, maticaConfig.RejectedId, maticaConfig.Port,
+-                    maticaConfig.TipperTemperature, maticaConfig.TipperPressure,
++                    maticaConfig.IpAddress, maticaConfig.TipperTemperature, maticaConfig.TipperPressure,
+                     maticaConfig.TipperConsumption, maticaConfig.TipperTime),
+             p.IsDeleted,
+             p.CreatedAt,
+-- 
+2.43.0
+

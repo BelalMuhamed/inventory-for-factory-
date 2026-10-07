@@ -1,0 +1,618 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <!-- 
+    Microsoft ResX Schema 
+    
+    Version 2.0
+    
+    The primary goals of this format is to allow a simple XML format 
+    that is mostly human readable. The generation and parsing of the 
+    various data types are done through the TypeConverter classes 
+    associated with the data types.
+    
+    Example:
+    
+    ... ado.net/XML headers & schema ...
+    <resheader name="resmimetype">text/microsoft-resx</resheader>
+    <resheader name="version">2.0</resheader>
+    <resheader name="reader">System.Resources.ResXResourceReader, System.Windows.Forms, ...</resheader>
+    <resheader name="writer">System.Resources.ResXResourceWriter, System.Windows.Forms, ...</resheader>
+    <data name="Name1"><value>this is my long string</value><comment>this is a comment</comment></data>
+    <data name="Color1" type="System.Drawing.Color, System.Drawing">Blue</data>
+    <data name="Bitmap1" mimetype="application/x-microsoft.net.object.binary.base64">
+        <value>[base64 mime encoded serialized .NET Framework object]</value>
+    </data>
+    <data name="Icon1" type="System.Drawing.Icon, System.Drawing" mimetype="application/x-microsoft.net.object.bytearray.base64">
+        <value>[base64 mime encoded string representing a byte array form of the .NET Framework object]</value>
+        <comment>This is a comment</comment>
+    </data>
+                
+    There are any number of "resheader" rows that contain simple 
+    name/value pairs.
+    
+    Each data row contains a name, and value. The row also contains a 
+    type or mimetype. Type corresponds to a .NET class that support 
+    text/value conversion through the TypeConverter architecture. 
+    Classes that don't support this are serialized and stored with the 
+    mimetype set.
+    
+    The mimetype is used for serialized objects, and tells the 
+    ResXResourceReader how to depersist the object. This is currently not 
+    extensible. For a given mimetype the value must be set accordingly:
+    
+    Note - application/x-microsoft.net.object.binary.base64 is the format 
+    that the ResXResourceWriter will generate, however the reader can 
+    read any of the formats listed below.
+    
+    mimetype: application/x-microsoft.net.object.binary.base64
+    value   : The object must be serialized with 
+            : System.Runtime.Serialization.Formatters.Binary.BinaryFormatter
+            : and then encoded with base64 encoding.
+    
+    mimetype: application/x-microsoft.net.object.soap.base64
+    value   : The object must be serialized with 
+            : System.Runtime.Serialization.Formatters.Soap.SoapFormatter
+            : and then encoded with base64 encoding.
+
+    mimetype: application/x-microsoft.net.object.bytearray.base64
+    value   : The object must be serialized into a byte array 
+            : using a System.ComponentModel.TypeConverter
+            : and then encoded with base64 encoding.
+    -->
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="Auth.InvalidCredentials" xml:space="preserve">
+    <value>Invalid username or password.</value>
+  </data>
+  <data name="Auth.InvalidRefreshToken" xml:space="preserve">
+    <value>The refresh token is invalid or expired.</value>
+  </data>
+  <data name="Auth.PrintAgentTokenRequiresTenant" xml:space="preserve">
+    <value>A Print Agent token can only be issued for a tenant caller.</value>
+  </data>
+  <data name="Auth.PrintAgentBranchNotFound" xml:space="preserve">
+    <value>No branch was found with the supplied id for this tenant.</value>
+  </data>
+  <data name="Auth.PrintAgentPrinterNotFound" xml:space="preserve">
+    <value>No printer was found with the supplied id at the supplied branch for this tenant.</value>
+  </data>
+  <data name="Auth.ServiceCredentialInvalid" xml:space="preserve">
+    <value>Invalid service credential.</value>
+  </data>
+  <data name="Auth.ServiceCredentialRevoked" xml:space="preserve">
+    <value>This service credential has been revoked.</value>
+  </data>
+  <data name="Auth.ServiceAccountBranchNotFound" xml:space="preserve">
+    <value>No branch was found with the supplied id for the supplied tenant.</value>
+  </data>
+  <data name="Auth.ServiceAccountNotFound" xml:space="preserve">
+    <value>No service account was found with the supplied id.</value>
+  </data>
+  <data name="Error.Unexpected" xml:space="preserve">
+    <value>An unexpected error occurred.</value>
+  </data>
+  <data name="Tenant.AlreadyDeleted" xml:space="preserve">
+    <value>Tenant {0} is already deleted.</value>
+  </data>
+  <data name="Tenant.CodeAlreadyExists" xml:space="preserve">
+    <value>A tenant with code '{0}' already exists.</value>
+  </data>
+  <data name="Tenant.NotFound" xml:space="preserve">
+    <value>No tenant was found with id {0}.</value>
+  </data>
+  <data name="Tenant.UsernameAlreadyExists" xml:space="preserve">
+    <value>A tenant with username '{0}' already exists.</value>
+  </data>
+  <data name="Batch.FileEmpty" xml:space="preserve">
+    <value>The uploaded file is empty.</value>
+  </data>
+  <data name="Batch.DecryptionFailed" xml:space="preserve">
+    <value>The file could not be decrypted. It may be corrupted or encrypted with the wrong key.</value>
+  </data>
+  <data name="Batch.DuplicateFile" xml:space="preserve">
+    <value>This exact file has already been uploaded.</value>
+  </data>
+  <data name="Batch.ExpectedRowCountMismatch" xml:space="preserve">
+    <value>Expected/actual row count mismatch: {0}.</value>
+  </data>
+  <data name="Batch.ProcessingFailed" xml:space="preserve">
+    <value>An unexpected error occurred while processing the batch. Reference the trace id when reporting this.</value>
+  </data>
+  <data name="Batch.Report.ColumnMaskedPan" xml:space="preserve">
+    <value>Masked PAN</value>
+  </data>
+  <data name="Batch.Report.ColumnFailureReason" xml:space="preserve">
+    <value>Failure Reason</value>
+  </data>
+  <data name="Batch.FailureReason.MalformedLine" xml:space="preserve">
+    <value>The row is malformed (wrong number of fields, or a required field is empty).</value>
+  </data>
+  <data name="Batch.FailureReason.InvalidPan" xml:space="preserve">
+    <value>The PAN is invalid (not numeric, wrong length, or failed the check digit).</value>
+  </data>
+  <data name="Batch.FailureReason.DuplicatePanInFile" xml:space="preserve">
+    <value>This PAN appears more than once in the file; only the first occurrence was processed.</value>
+  </data>
+  <data name="Batch.FailureReason.UnknownProduct" xml:space="preserve">
+    <value>The product named in this row does not exist for this tenant.</value>
+  </data>
+  <data name="Batch.FailureReason.UnknownBranch" xml:space="preserve">
+    <value>The branch named in this row does not exist for this tenant.</value>
+  </data>
+  <data name="Batch.ActorNotResolved" xml:space="preserve">
+    <value>The acting principal could not be resolved.</value>
+  </data>
+  <data name="Batch.InvalidFileExtension" xml:space="preserve">
+    <value>Only .dat files can be uploaded.</value>
+  </data>
+  <data name="Batch.FileMissing" xml:space="preserve">
+    <value>No file was supplied.</value>
+  </data>
+  <data name="Batch.EncryptionFailed" xml:space="preserve">
+    <value>The card file could not be encrypted. Reference the trace id when reporting this.</value>
+  </data>
+  <data name="CardFile.ActorNotResolved" xml:space="preserve">
+    <value>The acting principal could not be resolved.</value>
+  </data>
+  <data name="CardFile.TenantUnavailable" xml:space="preserve">
+    <value>Tenant {0} is inactive or deleted and cannot be issued a card file.</value>
+  </data>
+  <data name="CardFile.NoCards" xml:space="preserve">
+    <value>At least one card is required.</value>
+  </data>
+  <data name="CardFile.TooManyCards" xml:space="preserve">
+    <value>A card file may contain at most {0} cards.</value>
+  </data>
+  <data name="CardFile.CardsRejected" xml:space="preserve">
+    <value>{0} card(s) failed validation. No file was generated.</value>
+  </data>
+  <data name="CardFile.GenerationFailed" xml:space="preserve">
+    <value>An unexpected error occurred while generating the card file. Reference the trace id when reporting this.</value>
+  </data>
+  <data name="Batch.FailureReason.CardInTransit" xml:space="preserve">
+    <value>This card is currently in transit or unassigned and cannot be updated by an upload.</value>
+  </data>
+  <data name="Batch.FailureReason.CardDisposed" xml:space="preserve">
+    <value>This card has been disposed and can no longer be updated.</value>
+  </data>
+  <data name="Batch.Report.ColumnRowNumber" xml:space="preserve">
+    <value>Row</value>
+  </data>
+  <data name="ProductItem.InTransit" xml:space="preserve">
+    <value>Product item {0} is in transit or unassigned and cannot be modified until the transfer is settled.</value>
+  </data>
+  <data name="ProductItem.Disposed" xml:space="preserve">
+    <value>Product item {0} has been disposed and can no longer be modified.</value>
+  </data>
+  <data name="ProductItem.DisposeNotAllowedHere" xml:space="preserve">
+    <value>Cards cannot be disposed through the status endpoint. Use the dispose endpoint, which requires a reason and a branch.</value>
+  </data>
+  <data name="ProductItem.InvalidPan" xml:space="preserve">
+    <value>The supplied card number is not valid.</value>
+  </data>
+  <data name="ProductItem.NotFoundForPrint" xml:space="preserve">
+    <value>No printable card was found matching the supplied card number for this product and branch.</value>
+  </data>
+  <data name="ProductItem.PrintFlowScopeMismatch" xml:space="preserve">
+    <value>The requested branch does not match this token's own scope.</value>
+  </data>
+  <data name="Product.TransactionWayImmutable" xml:space="preserve">
+    <value>The transaction way of product {0} cannot be changed because cards already exist for it.</value>
+  </data>
+  <data name="Transfer.NotFound" xml:space="preserve">
+    <value>No transfer was found with id {0}.</value>
+  </data>
+  <data name="Transfer.SystemAdminNotAllowed" xml:space="preserve">
+    <value>A system administrator cannot create or settle transfers.</value>
+  </data>
+  <data name="Transfer.SameSourceAndTarget" xml:space="preserve">
+    <value>The source and target branches must be different.</value>
+  </data>
+  <data name="Transfer.BranchNotFound" xml:space="preserve">
+    <value>No branch was found with id {0}.</value>
+  </data>
+  <data name="Transfer.BranchDeleted" xml:space="preserve">
+    <value>Branch {0} is deleted and cannot take part in a transfer.</value>
+  </data>
+  <data name="Transfer.TargetBranchInactive" xml:space="preserve">
+    <value>Branch {0} is inactive and cannot receive stock.</value>
+  </data>
+  <data name="Transfer.NoItems" xml:space="preserve">
+    <value>A transfer must contain at least one product line.</value>
+  </data>
+  <data name="Transfer.DuplicateProduct" xml:space="preserve">
+    <value>Product {0} appears more than once. Combine the quantities into a single line.</value>
+  </data>
+  <data name="Transfer.InvalidQuantity" xml:space="preserve">
+    <value>The quantity for product {0} must be greater than zero.</value>
+  </data>
+  <data name="Transfer.ProductNotFound" xml:space="preserve">
+    <value>No product was found with id {0}.</value>
+  </data>
+  <data name="Transfer.TooManyItems" xml:space="preserve">
+    <value>A transfer may move at most {0} cards.</value>
+  </data>
+  <data name="Transfer.ItemIdsRequired" xml:space="preserve">
+    <value>Product {0} is tracked per card, so the specific cards being transferred must be listed.</value>
+  </data>
+  <data name="Transfer.ItemCountMismatch" xml:space="preserve">
+    <value>The number of cards listed for product {0} does not match its quantity.</value>
+  </data>
+  <data name="Transfer.ItemIdsNotAllowedForUnknown" xml:space="preserve">
+    <value>Product {0} is not tracked per card, so individual cards cannot be selected for it.</value>
+  </data>
+  <data name="Transfer.DuplicateItem" xml:space="preserve">
+    <value>Card {0} is listed more than once.</value>
+  </data>
+  <data name="Transfer.ItemNotFound" xml:space="preserve">
+    <value>No card was found with id {0}.</value>
+  </data>
+  <data name="Transfer.ItemNotAtSourceBranch" xml:space="preserve">
+    <value>Card {0} is not at the source branch.</value>
+  </data>
+  <data name="Transfer.ItemProductMismatch" xml:space="preserve">
+    <value>Card {0} does not belong to the product it was listed under.</value>
+  </data>
+  <data name="Transfer.ItemNotAvailable" xml:space="preserve">
+    <value>Card {0} is not available to transfer.</value>
+  </data>
+  <data name="Transfer.NotInProgress" xml:space="preserve">
+    <value>Transfer {0} has already been settled.</value>
+  </data>
+  <data name="Transfer.ConcurrencyConflict" xml:space="preserve">
+    <value>This transfer was modified by another operation. Please reload and retry.</value>
+  </data>
+  <data name="Transfer.UnknownProductInSettlement" xml:space="preserve">
+    <value>Product {0} is not part of this transfer.</value>
+  </data>
+  <data name="Transfer.MissingProductInSettlement" xml:space="preserve">
+    <value>Product {0} is part of this transfer and must be settled explicitly.</value>
+  </data>
+  <data name="Transfer.SettlementQuantityOutOfRange" xml:space="preserve">
+    <value>The received and disposed quantities for product {0} are invalid for the quantity that was sent.</value>
+  </data>
+  <data name="Transfer.DispositionsRequired" xml:space="preserve">
+    <value>Product {0} is tracked per card, so every card must be settled individually.</value>
+  </data>
+  <data name="Transfer.DispositionCountMismatch" xml:space="preserve">
+    <value>The per-card outcomes for product {0} do not match the received and disposed quantities.</value>
+  </data>
+  <data name="Transfer.DispositionItemNotInTransfer" xml:space="preserve">
+    <value>Card {0} is not part of this transfer.</value>
+  </data>
+  <data name="Transfer.PendingDispositionNotAllowed" xml:space="preserve">
+    <value>Card {0} must be settled as received, returned, or disposed.</value>
+  </data>
+  <data name="Transfer.ReturnBranchUnavailable" xml:space="preserve">
+    <value>Branch {0} is unavailable, so the remaining cards cannot be returned to it.</value>
+  </data>
+  <data name="Transfer.StockInconsistency" xml:space="preserve">
+    <value>Stock for branch/product {0} does not match the cards on record. The transfer was not applied.</value>
+  </data>
+  <data name="Disposal.ReasonRequired" xml:space="preserve">
+    <value>A reason is required in order to dispose of cards.</value>
+  </data>
+  <data name="Disposal.ReasonTooLong" xml:space="preserve">
+    <value>The disposal reason cannot exceed {0} characters.</value>
+  </data>
+  <data name="Disposal.SystemAdminNotAllowed" xml:space="preserve">
+    <value>A system administrator cannot dispose of cards.</value>
+  </data>
+  <data name="Disposal.BranchNotFound" xml:space="preserve">
+    <value>No branch was found with id {0}.</value>
+  </data>
+  <data name="Disposal.BranchDeleted" xml:space="preserve">
+    <value>Branch {0} is deleted and cannot dispose of cards.</value>
+  </data>
+  <data name="Disposal.BranchNotPartyToTransfer" xml:space="preserve">
+    <value>Branch {0} is not involved in this transfer and cannot dispose of its cards.</value>
+  </data>
+  <data name="Disposal.NothingToDispose" xml:space="preserve">
+    <value>At least one card must be identified for disposal.</value>
+  </data>
+  <data name="Disposal.SelectionAmbiguous" xml:space="preserve">
+    <value>Specify either the cards to dispose of or the quantities per product, not both.</value>
+  </data>
+  <data name="Disposal.AlreadyDisposed" xml:space="preserve">
+    <value>Card {0} has already been disposed.</value>
+  </data>
+  <data name="Disposal.NotDisposable" xml:space="preserve">
+    <value>Card {0} has been issued and can no longer be disposed.</value>
+  </data>
+  <data name="Disposal.CardNotAtBranch" xml:space="preserve">
+    <value>Card {0} is not held by the branch performing this disposal.</value>
+  </data>
+  <data name="Disposal.CardInTransfer" xml:space="preserve">
+    <value>Card {0} is part of an active transfer and must be disposed of when that transfer is settled.</value>
+  </data>
+  <data name="Disposal.InsufficientAvailable" xml:space="preserve">
+    <value>Branch/product {0} does not hold enough available cards to dispose of.</value>
+  </data>
+  <data name="Disposal.InvalidQuantity" xml:space="preserve">
+    <value>The disposal quantity for product {0} must be greater than zero.</value>
+  </data>
+  <data name="Disposal.DuplicateProduct" xml:space="preserve">
+    <value>Product {0} appears more than once. Combine the quantities into a single line.</value>
+  </data>
+  <data name="Transfer.ActorNotResolved" xml:space="preserve">
+    <value>The acting principal could not be resolved.</value>
+  </data>
+  <data name="Transfer.DisposingBranchRequired" xml:space="preserve">
+    <value>A disposing branch is required when any quantity is disposed of.</value>
+  </data>
+  <data name="Transfer.PersistenceConflict" xml:space="preserve">
+    <value>The transfer could not be saved because of a conflicting change. Please retry.</value>
+  </data>
+  <data name="Transfer.ActionNotesTooLong" xml:space="preserve">
+    <value>The note cannot exceed {0} characters.</value>
+  </data>
+  <data name="Transfer.DifferenceActionRequired" xml:space="preserve">
+    <value>Product {0} was not fully received, so a difference action must be specified.</value>
+  </data>
+  <data name="Transfer.DifferenceActionNotApplicable" xml:space="preserve">
+    <value>Product {0} has no unreceived remainder, or is tracked per card, so a difference action does not apply.</value>
+  </data>
+  <data name="Transfer.InvalidDifferenceAction" xml:space="preserve">
+    <value>The difference action supplied for product {0} is not recognized.</value>
+  </data>
+  <data name="Transfer.DisposalNotAllowedForUnknown" xml:space="preserve">
+    <value>Product {0} is not tracked per card, so it cannot be disposed of. Settle it with a difference action instead.</value>
+  </data>
+  <data name="Disposal.ActorNotResolved" xml:space="preserve">
+    <value>The acting principal could not be resolved.</value>
+  </data>
+  <data name="Disposal.DuplicateItem" xml:space="preserve">
+    <value>Card {0} is listed more than once.</value>
+  </data>
+  <data name="Disposal.NotFound" xml:space="preserve">
+    <value>No disposal was found with id {0}.</value>
+  </data>
+  <data name="Disposal.CardNotFound" xml:space="preserve">
+    <value>No card was found with id {0}.</value>
+  </data>
+  <data name="Disposal.PersistenceConflict" xml:space="preserve">
+    <value>The disposal could not be saved because of a conflicting change. Please retry.</value>
+  </data>
+  <data name="Branch.HasStock" xml:space="preserve">
+    <value>Branch {0} holds non-zero stock and cannot be deleted. Transfer or dispose of it first.</value>
+  </data>
+  <data name="Branch.HasInProgressTransfer" xml:space="preserve">
+    <value>Branch {0} has a transfer in progress and cannot be deleted until it is settled.</value>
+  </data>
+  <data name="BranchRequest.ActorNotResolved" xml:space="preserve">
+    <value>The acting principal could not be resolved.</value>
+  </data>
+  <data name="BranchRequest.SystemAdminNotAllowed" xml:space="preserve">
+    <value>A system administrator cannot create, confirm, refuse, or cancel branch requests.</value>
+  </data>
+  <data name="BranchRequest.NotFound" xml:space="preserve">
+    <value>No branch request was found with id {0}.</value>
+  </data>
+  <data name="BranchRequest.NoItems" xml:space="preserve">
+    <value>A branch request must contain at least one product line.</value>
+  </data>
+  <data name="BranchRequest.InvalidQuantity" xml:space="preserve">
+    <value>The asked quantity for product {0} must be greater than zero.</value>
+  </data>
+  <data name="BranchRequest.DuplicateProduct" xml:space="preserve">
+    <value>Product {0} appears more than once. Combine the quantities into a single line.</value>
+  </data>
+  <data name="BranchRequest.ActionNotesTooLong" xml:space="preserve">
+    <value>The note cannot exceed {0} characters.</value>
+  </data>
+  <data name="BranchRequest.BranchNotFound" xml:space="preserve">
+    <value>No branch was found with id {0}.</value>
+  </data>
+  <data name="BranchRequest.BranchDeleted" xml:space="preserve">
+    <value>Branch {0} is deleted and cannot take part in a branch request.</value>
+  </data>
+  <data name="BranchRequest.BranchInactive" xml:space="preserve">
+    <value>Branch {0} is inactive and cannot request stock.</value>
+  </data>
+  <data name="BranchRequest.ProductNotFound" xml:space="preserve">
+    <value>No product was found with id {0}.</value>
+  </data>
+  <data name="BranchRequest.DuplicateOpenRequest" xml:space="preserve">
+    <value>Product {0} already has an open request from this branch.</value>
+  </data>
+  <data name="BranchRequest.NoTransfers" xml:space="preserve">
+    <value>A confirmation must contain at least one transfer plan.</value>
+  </data>
+  <data name="BranchRequest.NotOpenForConfirmation" xml:space="preserve">
+    <value>Branch request {0} is not open for confirmation.</value>
+  </data>
+  <data name="BranchRequest.SourceIsRequestingBranch" xml:space="preserve">
+    <value>Branch {0} is the requesting branch and cannot also be the source of a transfer that fulfils it.</value>
+  </data>
+  <data name="BranchRequest.NotOpenForClosure" xml:space="preserve">
+    <value>Branch request {0} is not open for refusal or cancellation.</value>
+  </data>
+  <data name="BranchRequest.ConcurrencyConflict" xml:space="preserve">
+    <value>This branch request was modified by another operation. Please reload and retry.</value>
+  </data>
+  <data name="BranchRequest.PersistenceConflict" xml:space="preserve">
+    <value>The branch request could not be saved because of a conflicting change. Please retry.</value>
+  </data>
+  <data name="Branch.HasOpenRequest" xml:space="preserve">
+    <value>Branch {0} has open stock requests and cannot be deleted until they are closed or fulfilled.</value>
+  </data>
+  <data name="Product.HasOpenRequest" xml:space="preserve">
+    <value>Product {0} is part of an open stock request line and cannot be deleted.</value>
+  </data>
+  <data name="Printer.ActorNotResolved" xml:space="preserve">
+    <value>The acting principal could not be resolved.</value>
+  </data>
+  <data name="Printer.OnlySystemAdmin" xml:space="preserve">
+    <value>Only a system administrator can create, update, delete, or restore printers.</value>
+  </data>
+  <data name="Printer.NotFound" xml:space="preserve">
+    <value>No printer was found with id {0}.</value>
+  </data>
+  <data name="Printer.TenantRequired" xml:space="preserve">
+    <value>A target tenant id is required when registering a printer as a system administrator.</value>
+  </data>
+  <data name="Printer.TargetTenantNotFound" xml:space="preserve">
+    <value>No tenant exists with id {0}.</value>
+  </data>
+  <data name="Printer.BranchNotFound" xml:space="preserve">
+    <value>No branch was found with id {0}.</value>
+  </data>
+  <data name="Printer.BranchDeleted" xml:space="preserve">
+    <value>Branch {0} is deleted and cannot have a printer registered to it.</value>
+  </data>
+  <data name="Printer.DuplicateUniqueNumber" xml:space="preserve">
+    <value>A printer with serial/IP '{0}' is already registered for this tenant.</value>
+  </data>
+  <data name="Printer.AlreadyDeleted" xml:space="preserve">
+    <value>Printer {0} is already deleted.</value>
+  </data>
+  <data name="Printer.NotDeleted" xml:space="preserve">
+    <value>Printer {0} is not deleted.</value>
+  </data>
+  <data name="Printer.MaticaConfigRequired" xml:space="preserve">
+    <value>A Matica printer requires its machine configuration (feeder, hopper, reject bin, port).</value>
+  </data>
+  <data name="Printer.MaticaConfigNotApplicable" xml:space="preserve">
+    <value>An Evolis printer does not accept a Matica machine configuration.</value>
+  </data>
+  <data name="ProductPrintConfig.NotFound" xml:space="preserve">
+    <value>Product {0} has no print configuration.</value>
+  </data>
+  <data name="ProductPrintConfig.OnlySystemAdmin" xml:space="preserve">
+    <value>Only a system administrator can create or update a product's print configuration.</value>
+  </data>
+  <data name="ProductPrintConfig.ActorNotResolved" xml:space="preserve">
+    <value>The acting principal could not be resolved.</value>
+  </data>
+  <data name="ProductPrintConfig.MaticaPayloadRequired" xml:space="preserve">
+    <value>A Matica print configuration payload is required when the printer type is Matica.</value>
+  </data>
+  <data name="ProductPrintConfig.MaticaPayloadNotApplicable" xml:space="preserve">
+    <value>A Matica print configuration payload does not apply when the printer type is Evolis.</value>
+  </data>
+  <data name="ProductPrintConfig.EvolisPayloadRequired" xml:space="preserve">
+    <value>An Evolis print configuration payload is required when the printer type is Evolis.</value>
+  </data>
+  <data name="ProductPrintConfig.EvolisPayloadNotApplicable" xml:space="preserve">
+    <value>An Evolis print configuration payload does not apply when the printer type is Matica.</value>
+  </data>
+  <data name="ProductPrintConfig.RibbonTypeNotFound" xml:space="preserve">
+    <value>No ribbon type exists with id {0}.</value>
+  </data>
+  <data name="ProductPrintConfig.InvalidHexColor" xml:space="preserve">
+    <value>'{0}' is not a valid HEX color. Use the form #RRGGBB or #RRGGBBAA.</value>
+  </data>
+  <data name="ProductPrintConfig.ImageNotFound" xml:space="preserve">
+    <value>No print image exists with id {0}.</value>
+  </data>
+  <data name="PrintImage.OnlySystemAdmin" xml:space="preserve">
+    <value>Only a system administrator can upload, replace, or migrate print images.</value>
+  </data>
+  <data name="PrintImage.TenantRequired" xml:space="preserve">
+    <value>A target tenant id is required when uploading a print image as a system administrator.</value>
+  </data>
+  <data name="PrintImage.TargetTenantNotFound" xml:space="preserve">
+    <value>No tenant exists with id {0}.</value>
+  </data>
+  <data name="PrintImage.NotFound" xml:space="preserve">
+    <value>No print image was found with id {0}.</value>
+  </data>
+  <data name="PrintImage.FileMissing" xml:space="preserve">
+    <value>No image file was supplied.</value>
+  </data>
+  <data name="PrintImage.FileTooLarge" xml:space="preserve">
+    <value>The image exceeds the maximum allowed size of {0} bytes.</value>
+  </data>
+  <data name="PrintImage.InvalidExtension" xml:space="preserve">
+    <value>This image file type is not supported.</value>
+  </data>
+  <data name="PrintImage.UnsupportedContent" xml:space="preserve">
+    <value>The uploaded file's content does not match a supported image format.</value>
+  </data>
+  <data name="PrintImage.InvalidFileName" xml:space="preserve">
+    <value>The file name could not be used. Please rename the file and try again.</value>
+  </data>
+  <data name="PrintImage.NameConflict" xml:space="preserve">
+    <value>Another image named '{0}' already exists for this tenant.</value>
+  </data>
+  <data name="PrintImage.SaveFailed" xml:space="preserve">
+    <value>The image could not be saved. Please try again.</value>
+  </data>
+  <data name="Printer.EvolisConfigNotApplicable" xml:space="preserve">
+    <value>A Matica printer does not accept an Evolis machine configuration.</value>
+  </data>
+  <data name="Printer.EvolisConfigRequired" xml:space="preserve">
+    <value>An Evolis printer requires its machine configuration (device name).</value>
+  </data>
+  <data name="Printer.DeviceNameRequired" xml:space="preserve">
+    <value>A device name is required and must be 200 characters or fewer.</value>
+  </data>
+  <data name="Printer.DefaultRibbonTypeNotFound" xml:space="preserve">
+    <value>No ribbon type exists with id {0}.</value>
+  </data>
+  <data name="Printer.DuplicateDeviceNameOnHost" xml:space="preserve">
+    <value>Device '{0}' is already registered on host '{1}'.</value>
+  </data>
+  <data name="Printer.SupervisorBranchMismatch" xml:space="preserve">
+    <value>The request's branch does not match the authenticated service account's branch.</value>
+  </data>
+  <data name="Printer.SupervisorHostNameRequired" xml:space="preserve">
+    <value>A host name is required.</value>
+  </data>
+</root>

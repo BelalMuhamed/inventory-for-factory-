@@ -1,0 +1,204 @@
+From 380d69f66a0a2480eae475624740bf6d913b1e24 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Mon, 24 Aug 2026 12:14:06 +0000
+Subject: [PATCH] Phase 1: fix info.json port back to a dedicated, fixed
+ configuration value
+
+Reverts the reconciliation-credential-era decision to make GetInfoJson's
+port caller-supplied like every other command - that decision was made
+without knowing it would interfere with the App Service Update process,
+which needs the info port to stay fixed independently of whatever the
+action port is doing at any given moment. Not a hardcoded literal
+either, per the design review: a dedicated MachineCommunicationOptions.
+InfoPort property, defaulting to "33201" (the same value the original
+pre-migration code hardcoded for this exact call, before the async
+migration collapsed it into the shared caller-supplied port). Every
+other port/timeout/URL in this service is configurable for the same
+reason a magic number here would be the one inconsistent exception.
+
+Per the design review's explicit choice, executed as recommended there:
+GetInfoAsync's `port` parameter is removed from the interface signature
+entirely, not silently ignored. A caller passing a port that quietly did
+nothing would be exactly the same class of footgun as the original
+hardcoding bug - a value the caller reasonably believes matters and
+doesn't. Both call sites (MachineController.GetMachineInfo,
+MachineController.Print's ready check) updated to stop passing one.
+
+GetMachineInfoReques.Port was deliberately NOT removed, despite becoming
+unused by GetMachineInfo specifically - confirmed by re-checking the
+controller before touching the DTO that GetMachineInfoReques is shared
+with ResetMachine, which genuinely needs a real, dynamic port for its
+Restore command. Removing the field would have broken that action.
+GetMachineInfo's handler still validates PrintRequest.Port (harmless -
+it doesn't reject anything that wasn't already going to be rejected),
+it just no longer uses the value for the info call itself; commented
+in place so this isn't mistaken for an oversight later.
+
+MaticaCommandClient's constructor now also takes
+IOptions<MachineCommunicationOptions> - no Program.cs change needed,
+since that type was already registered in DI from the foundation phase
+and MaticaCommandClient is resolved through the container.
+
+appsettings.json: added MachineCommunication:InfoPort ("33201") next to
+the existing TimeoutSeconds - left TimeoutSeconds at its current
+hand-tuned value (100, up from the original default of 10) rather than
+touch it, since that's evidence of separate, already-in-progress tuning
+work unrelated to this change.
+
+Verified by: a repo-wide grep confirming zero remaining 3-argument
+GetInfoAsync call sites (including a check that the separately-owned
+HardwareIoPocController doesn't call this interface at all, so it's
+unaffected); brace balance across every touched file; JSON validity on
+appsettings.json; and the full-repo symbol-table cross-check (same four
+already-known false positives, nothing new). No dotnet SDK in the
+authoring environment - please build locally before merging, and per
+the design review, confirm on real hardware that 33201 is genuinely
+fixed across an App Service Update - if the update process itself
+relocates the info listener, a fixed default doesn't fully solve this
+and the port would need to become something the update process reports
+at runtime instead, which is a materially bigger change than this one.
+---
+ .../Controllers/MachineController.cs          | 10 +++++--
+ .../Machine/MaticaCommandClient.cs            | 29 +++++++++++++------
+ .../Options/ServiceOptions.cs                 | 17 +++++++++++
+ invetoryBackGroundServices/appsettings.json   |  3 +-
+ 4 files changed, 47 insertions(+), 12 deletions(-)
+
+diff --git a/invetoryBackGroundServices/Controllers/MachineController.cs b/invetoryBackGroundServices/Controllers/MachineController.cs
+index d304585..30b37cf 100644
+--- a/invetoryBackGroundServices/Controllers/MachineController.cs
++++ b/invetoryBackGroundServices/Controllers/MachineController.cs
+@@ -82,10 +82,14 @@ namespace invetoryBackGroundServices.Controllers
+         public async Task<IActionResult> GetMachineInfo(
+             GetMachineInfoReques PrintRequest, CancellationToken cancellationToken)
+         {
++            // PrintRequest.Port is still validated below even though GetInfoAsync no longer takes
++            // one - GetMachineInfoReques is shared with ResetMachine, which does need a real port
++            // for its Restore command, so the field stays on the DTO and this action still
++            // validates whatever value the caller sends, it just doesn't use it for the info call.
+             IActionResult? invalid = ValidateConnection(PrintRequest.Ip, PrintRequest.Port, out string ip);
+             if (invalid is not null) return invalid;
+ 
+-            MachineResponse info = await _machine.GetInfoAsync(ip, PrintRequest.Port, cancellationToken);
++            MachineResponse info = await _machine.GetInfoAsync(ip, cancellationToken);
+             return Ok(ApiResponse<MachineResponse>.Ok(info));
+         }
+ 
+@@ -197,7 +201,9 @@ namespace invetoryBackGroundServices.Controllers
+             // GetInfoAsync throwing here (communication failure, timeout, protocol error)
+             // propagates to the exception middleware directly - nothing to eject yet, so there is
+             // no recovery action to perform first, same as the previous version's behavior.
+-            MachineResponse status = await _machine.GetInfoAsync(ip, dto.Port, cancellationToken);
++            // dto.Port is validated above and used by every other command in this method, but not
++            // by this one - GetInfoJson always uses the fixed MachineCommunicationOptions.InfoPort.
++            MachineResponse status = await _machine.GetInfoAsync(ip, cancellationToken);
+ 
+             if (status.MachineStatus is null
+                 || status.MachineStatus.machineStatus != "READY"
+diff --git a/invetoryBackGroundServices/Machine/MaticaCommandClient.cs b/invetoryBackGroundServices/Machine/MaticaCommandClient.cs
+index 98f0ff1..d89ab53 100644
+--- a/invetoryBackGroundServices/Machine/MaticaCommandClient.cs
++++ b/invetoryBackGroundServices/Machine/MaticaCommandClient.cs
+@@ -2,7 +2,9 @@ using System;
+ using System.Collections.Generic;
+ using System.Threading;
+ using System.Threading.Tasks;
++using invetoryBackGroundServices.Options;
+ using MATICA_S3300e.LAN;
++using Microsoft.Extensions.Options;
+ using Newtonsoft.Json;
+ using Newtonsoft.Json.Serialization;
+ 
+@@ -36,8 +38,15 @@ namespace invetoryBackGroundServices.Machine
+         /// Reads machine status, returning it parsed rather than as raw JSON text. Returns the
+         /// full <see cref="MachineResponse"/> envelope - both <c>Machine_Configuration</c> and
+         /// <c>Machine_Status</c> - since callers legitimately want either.
++        /// <para>
++        /// No <c>port</c> parameter, deliberately - unlike every other command, GetInfoJson always
++        /// uses the fixed <see cref="MachineCommunicationOptions.InfoPort"/>, never a
++        /// caller-supplied value. An earlier version of this method did take one; removing it from
++        /// the signature entirely (rather than accepting and silently ignoring it) means a caller
++        /// can't reasonably believe passing a different port here does anything.
++        /// </para>
+         /// </summary>
+-        Task<MachineResponse> GetInfoAsync(string ip, string port, CancellationToken cancellationToken);
++        Task<MachineResponse> GetInfoAsync(string ip, CancellationToken cancellationToken);
+ 
+         /// <summary>Issues the Restore (reset) command.</summary>
+         Task RestoreAsync(string ip, string port, CancellationToken cancellationToken);
+@@ -67,20 +76,22 @@ namespace invetoryBackGroundServices.Machine
+         };
+ 
+         private readonly IMachineTransport _transport;
++        private readonly MachineCommunicationOptions _options;
+ 
+         /// <summary>Creates the command client over the given transport.</summary>
+-        public MaticaCommandClient(IMachineTransport transport) => _transport = transport;
++        public MaticaCommandClient(IMachineTransport transport, IOptions<MachineCommunicationOptions> options)
++        {
++            _transport = transport;
++            _options = options.Value;
++        }
+ 
+         /// <inheritdoc />
+-        public async Task<MachineResponse> GetInfoAsync(string ip, string port, CancellationToken cancellationToken)
++        public async Task<MachineResponse> GetInfoAsync(string ip, CancellationToken cancellationToken)
+         {
+-            // Approved change: this uses the caller-supplied port like every other command,
+-            // rather than the port 33201 the pre-existing httpPOSTGetInfoJson hardcoded.
+-            // NOTE: the earlier POC validated this request shape against the real machine on port
+-            // 33201 specifically - it did not validate a different port. See the patch notes for
+-            // the two-call verification to run before relying on this.
++            // Fixed port (MachineCommunicationOptions.InfoPort), never the caller's action port -
++            // see this method's own interface doc comment and InfoPort's doc comment for why.
+             string body = await _transport.PostAsync(
+-                ip, port, ActionPath, "{\"Command\":\"GetInfoJson\"}", cancellationToken);
++                ip, _options.InfoPort, ActionPath, "{\"Command\":\"GetInfoJson\"}", cancellationToken);
+ 
+             MachineResponse? response;
+             try
+diff --git a/invetoryBackGroundServices/Options/ServiceOptions.cs b/invetoryBackGroundServices/Options/ServiceOptions.cs
+index 9510d65..f3c5d38 100644
+--- a/invetoryBackGroundServices/Options/ServiceOptions.cs
++++ b/invetoryBackGroundServices/Options/ServiceOptions.cs
+@@ -21,6 +21,23 @@ namespace invetoryBackGroundServices.Options
+         /// 10, matching the only timeout the pre-existing code actually set.
+         /// </summary>
+         public int TimeoutSeconds { get; set; } = 10;
++
++        /// <summary>
++        /// Fixed port for <c>GetInfoJson</c> ("info.json"), separate from every other command's
++        /// caller-supplied port. Defaults to the port the pre-existing (pre-async-migration) code
++        /// hardcoded for this exact call.
++        /// <para>
++        /// A dedicated configuration value with a fixed default, deliberately not a hardcoded
++        /// literal in code — every other port/timeout/URL in this service is configurable for the
++        /// same reason a magic number here would be the one inconsistent exception. It was briefly
++        /// made request-driven like every other command's port (approved decision, reconciliation-
++        /// credential phase) on the theory that the info and action ports were the same value; that
++        /// turned out to be wrong in practice — the info port must stay fixed independently of
++        /// whatever the action port is doing, including during an in-progress App Service Update,
++        /// which the shared-port behavior was actively interfering with.
++        /// </para>
++        /// </summary>
++        public string InfoPort { get; set; } = "33201";
+     }
+ 
+     /// <summary>
+diff --git a/invetoryBackGroundServices/appsettings.json b/invetoryBackGroundServices/appsettings.json
+index 392ea32..5f86045 100644
+--- a/invetoryBackGroundServices/appsettings.json
++++ b/invetoryBackGroundServices/appsettings.json
+@@ -10,7 +10,8 @@
+     "AllowedOrigins": [ "http://localhost:4200" ]
+   },
+   "MachineCommunication": {
+-    "TimeoutSeconds": 100
++    "TimeoutSeconds": 100,
++    "InfoPort": "33201"
+   },
+   "Outbox": {
+     "Directory": ""
+-- 
+2.43.0
+

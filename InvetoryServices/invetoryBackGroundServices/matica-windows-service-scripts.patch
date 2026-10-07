@@ -1,0 +1,692 @@
+From 3db804745c0b2c7cafa5d4b0aa67d5fcd76dac04 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Sun, 23 Aug 2026 12:27:53 +0000
+Subject: [PATCH] Windows Service hosting & recovery: fix name mismatch, add
+ automatic recovery, add full control script set
+
+Last item on the original roadmap - everything else (foundation, print-
+flow migration, legacy cleanup, outbox/Hangfire, reconciliation
+credential) was already delivered. This is scripts and documentation
+only; no C# changed.
+
+Two real, confirmed bugs fixed in the scripts actually used today
+(publish/install-service.bat, publish/uninstall-service.bat), not
+assumed - read directly before editing:
+
+1. Service name mismatch. SERVICE_NAME was "MyWindowsServiceApp", but
+   Program.cs's AddWindowsService uses ServiceName "InvetoryServices" -
+   the SCM-registered name and the running process's own internal
+   identity have never matched. Fixed to "InvetoryServices" on both
+   scripts, matching the app's actual identity rather than an
+   unrelated placeholder string.
+
+2. No automatic-recovery configuration at all. The previous
+   install-service.bat called only `sc create ... start= auto` - no
+   `sc failure`. A crash simply left the service down until someone
+   noticed; there was nothing to observe or verify, because nothing
+   was configured. Added: restart 5 seconds after each of the first
+   three unexpected exits within a rolling 24-hour window, then stop
+   trying - a persistently crashing service needs a human, not an
+   infinite restart loop that hides the underlying problem.
+
+Also added to both the fixed publish/ scripts and a new canonical
+deploy/ folder: start-service.bat, stop-service.bat, restart-service.bat
+(stops, waits for a confirmed STOPPED state via polling rather than a
+fixed sleep, then starts - avoids racing a slow shutdown), and
+status-service.bat (read-only, shows both current state and the
+configured recovery actions - the only one of the six that doesn't
+need elevation, useful for verifying install-service.bat's recovery
+configuration actually took effect without needing admin rights just
+to check).
+
+New deploy/ folder is the canonical, maintained copy going forward -
+confirmed via the tracked FolderProfile.pubxml that the actual
+configured dotnet publish output target is
+bin\Release\net8.0\publish\ inside the project folder, which is a
+different location from the repo-root publish\ folder these scripts
+have historically lived in. That means the repo-root publish\ folder
+is not something `dotnet publish` will ever regenerate or keep in
+sync - scripts living only there were one accidental deletion away
+from being lost with no build step to recreate them. Fixed the
+existing copies in place (since that's what's actually being run
+today) and added the canonical set in deploy/, which isn't inside any
+build-output path at all.
+
+deploy/README.md: complete deployment checklist - every appsettings.json
+key and every secret this service now needs across all the phases
+delivered this series (Cors, MachineCommunication, Outbox, InventoryApi,
+PrintAgentAuth, ReconciliationCredential), which secret goes where
+(user-secrets for dev, environment variable with the double-underscore
+convention for production - user-secrets don't exist on a production
+machine at all), first-time install steps, and an end-to-end
+verification sequence including deliberately killing the process to
+confirm automatic recovery actually works rather than just trusting
+that sc failure was configured correctly.
+
+One thing found but deliberately not fixed as part of this phase,
+documented instead: this repo has bin/, obj/, and .vs/ in .gitignore,
+but a large number of files under
+invetoryBackGroundServices/bin/Release/net8.0/publish/ and the
+repo-root publish/ folder - including compiled DLLs, the .exe, and
+actual runtime log files under publish/AppLog/ - are already tracked
+in git history from before .gitignore existed (an ignore rule never
+retroactively untracks a file). Confirmed by grep against git ls-files
+before writing this note, not assumed. This is a real repo-hygiene
+issue and the AppLog contents may be worth treating as sensitive, but
+untracking + rewriting history is a bigger, more disruptive operation
+than adding install scripts and deserves its own explicit decision
+rather than being bundled in here silently.
+
+No dotnet SDK involved in this phase at all - these are batch scripts
+and documentation, not C#. Verified by: every goto label referenced
+actually exists as a target in the same file; parenthesis balance
+across every script (batch's if/else blocks are paren-delimited, same
+class of check as brace-balance on the C# phases); and a plain read-
+through of the final commands themselves for correctness (sc syntax,
+the STOPPED-polling loop logic in uninstall/restart), since there's no
+compiler equivalent for batch scripts to lean on the way there was for
+every prior phase.
+---
+ deploy/README.md              | 128 ++++++++++++++++++++++++++++++++++
+ deploy/install-service.bat    |  84 ++++++++++++++++++++++
+ deploy/restart-service.bat    |  30 ++++++++
+ deploy/start-service.bat      |   6 ++
+ deploy/status-service.bat     |  19 +++++
+ deploy/stop-service.bat       |   8 +++
+ deploy/uninstall-service.bat  |  40 +++++++++++
+ publish/install-service.bat   |  68 ++++++++++++++++--
+ publish/restart-service.bat   |  30 ++++++++
+ publish/start-service.bat     |   6 ++
+ publish/status-service.bat    |  19 +++++
+ publish/stop-service.bat      |   8 +++
+ publish/uninstall-service.bat |  43 +++++++++++-
+ 13 files changed, 482 insertions(+), 7 deletions(-)
+ create mode 100644 deploy/README.md
+ create mode 100644 deploy/install-service.bat
+ create mode 100644 deploy/restart-service.bat
+ create mode 100644 deploy/start-service.bat
+ create mode 100644 deploy/status-service.bat
+ create mode 100644 deploy/stop-service.bat
+ create mode 100644 deploy/uninstall-service.bat
+ create mode 100644 publish/restart-service.bat
+ create mode 100644 publish/start-service.bat
+ create mode 100644 publish/status-service.bat
+ create mode 100644 publish/stop-service.bat
+
+diff --git a/deploy/README.md b/deploy/README.md
+new file mode 100644
+index 0000000..fa2e58b
+--- /dev/null
++++ b/deploy/README.md
+@@ -0,0 +1,128 @@
++# Matica Printer Agent — Deployment Guide
++
++## Prerequisites
++
++- Windows, .NET 8 runtime (the published output is self-contained only if
++  published that way — if not, the target machine needs the .NET 8 ASP.NET
++  Core runtime installed).
++- Administrator rights on the target machine, for the install/uninstall/
++  start/stop/restart scripts (`sc create`/`sc failure`/`sc start`/`sc stop`
++  all require elevation; `status-service.bat` does not).
++- Network reachability from this machine to:
++  - The Matica S3300e printer's LAN IP (whatever port your printer config
++    supplies per-request).
++  - The Inventory API's base URL (`InventoryApi:BaseUrl`).
++- A **published** build — publish via the `FolderProfile` publish profile
++  (`invetoryBackGroundServices/Properties/PublishProfiles/FolderProfile.pubxml`),
++  which outputs to `bin\Release\net8.0\publish\` inside the project folder.
++  This repo also has a separate, older `publish\` folder at the repo root
++  containing an earlier build and the original install scripts — **that
++  folder is not what `dotnet publish` actually produces with the profile
++  currently configured**, so don't assume it's up to date. Republish before
++  deploying rather than trusting whichever `publish\` folder happens to be
++  present.
++
++## First-time install on a new machine
++
++1. Publish the project (Visual Studio's Publish action, using the
++   `FolderProfile`, or `dotnet publish -c Release`).
++2. Copy the **entire** publish output folder to the target machine — the
++   `.exe`, `appsettings.json`, all dependency DLLs.
++3. Copy this `deploy\` folder's scripts alongside the executable (or run
++   them from `deploy\` with the executable's path adjusted — the scripts
++   assume they sit next to `invetoryBackGroundServices.exe`; see each
++   script's own comments).
++4. Fill in `appsettings.json`'s non-secret values (see the checklist below).
++5. Set every required secret via `dotnet user-secrets set` **on the
++   development machine before publishing** (user-secrets are a developer
++   convenience tied to a project, not something that ships to production)
++   — or, for a real production deployment, set each one as an **environment
++   variable** on the target machine instead (the same fail-fast checks in
++   `Program.cs` read from either source; user-secrets don't exist outside
++   a dev machine at all). See the checklist below for the exact list and
++   the double-underscore convention environment variables need.
++6. Run `install-service.bat` as Administrator.
++7. Run `status-service.bat` to confirm it started; if it didn't, check the
++   `AppLog` folder next to the executable — the fail-fast checks throw a
++   clear message naming exactly which configuration value is missing.
++
++## Configuration checklist
++
++Every value below has been introduced across this project's phases; this
++is the complete list in one place; get any one of them wrong and the
++service throws a clear fail-fast error at startup (except an item marked
++non-fatal, and except the Inventory API's own values, which live on that
++project, not this one).
++
++**Non-secret — `appsettings.json`:**
++
++| Key | Meaning |
++|---|---|
++| `Cors:AllowedOrigins` | Exact origin(s) allowed to call this service (e.g. Angular's URL). Empty fails startup on purpose. |
++| `MachineCommunication:TimeoutSeconds` | Per-command timeout talking to the physical printer. |
++| `Outbox:Directory` | Where pending reconciliation entries are written. Blank defaults to an `Outbox` folder next to the executable — fine for one machine, worth setting explicitly if you ever need to find it without guessing. |
++| `InventoryApi:BaseUrl` | The Inventory API's base URL this service calls. |
++| `PrintAgentAuth:Issuer` / `Audience` | Must match the Inventory API's `PrintAgentToken:Issuer`/`Audience` exactly. |
++| `ReconciliationCredential:ClientId` | The GUID from provisioning a `PrintAgentServiceAccount` (see the reconciliation-credential phase) — not a secret itself, but only meaningful once that account has actually been provisioned on the Inventory API. |
++
++**Secret — user-secrets (dev) or environment variable (production), never in `appsettings.json`:**
++
++| Key | Meaning |
++|---|---|
++| `PrintAgentAuth:SigningKey` | Must be byte-for-byte identical to the Inventory API's `PrintAgentToken:SigningKey`. |
++| `ReconciliationCredential:ClientSecret` | The one-time secret returned when the service account was provisioned via `POST api/auth/service-accounts` on the Inventory API. Lost means re-provision, not recover. |
++
++As an environment variable, a colon-separated key like `PrintAgentAuth:SigningKey`
++becomes `PrintAgentAuth__SigningKey` (double underscore) on most platforms —
++this is .NET configuration's own convention, not specific to this service.
++
++## Scripts in this folder
++
++| Script | Requires elevation | Purpose |
++|---|---|---|
++| `install-service.bat` | Yes | Registers the service, configures automatic crash recovery, starts it. Refuses to run if the service already exists (uninstall first). |
++| `uninstall-service.bat` | Yes | Stops (if running) and removes the service, including its recovery configuration. |
++| `start-service.bat` | Yes | Starts an already-installed, stopped service. |
++| `stop-service.bat` | Yes | Stops a running service. Does not affect automatic recovery — that only triggers on an unexpected exit, not a deliberate stop. |
++| `restart-service.bat` | Yes | Stops, waits for a clean STOPPED state, then starts — avoids racing a slow shutdown. |
++| `status-service.bat` | No | Shows current state and the configured recovery actions. Safe to run anytime, including to verify install-service.bat actually configured recovery correctly. |
++
++## Automatic recovery
++
++`install-service.bat` configures `sc failure` to restart the process 5
++seconds after each of its first three unexpected exits within a rolling
++24-hour window, then stop trying. This did not exist before this phase —
++confirmed by reading the repo's previous install script, which only ever
++called `sc create ... start= auto` with no failure-recovery configuration
++at all, so a crash previously just left the service down until someone
++noticed. A service that keeps crashing past three attempts needs a human
++looking at the log, not a longer retry list.
++
++## Verifying a deployment end to end
++
++1. `status-service.bat` — confirm `RUNNING` and that `sc qfailure` shows
++   the restart actions configured above.
++2. Trigger a real print (or at minimum a `GET /api/Machine/get-machine-info`
++   call) and confirm it succeeds against the actual printer.
++3. Confirm the reconciliation startup scan ran — check `AppLog` for an
++   "Outbox sweep" line right after the service started (only appears if
++   there was at least one pending entry; an empty outbox logs nothing on
++   that specific line, which is expected, not a failure).
++4. Simulate a crash (`taskkill /F` on the process, not `stop-service.bat` —
++   a deliberate stop doesn't exercise recovery) and confirm the service
++   comes back on its own within a few seconds, per the recovery
++   configuration above.
++
++## Known gap not addressed by this phase
++
++This repository has `bin/`, `obj/`, and `.vs/` in `.gitignore`, but a large
++number of files under `invetoryBackGroundServices/bin/Release/net8.0/publish/`
++and the repo-root `publish/` folder — including compiled DLLs, the `.exe`,
++and actual runtime log files under `publish/AppLog/` — are already tracked
++in git history from before the `.gitignore` was added (a `.gitignore` entry
++never retroactively untracks a file). This is a real repo-hygiene issue
++worth a deliberate cleanup pass (`git rm --cached` plus a history rewrite
++if the tracked log contents are considered sensitive), flagged here rather
++than fixed silently as part of this phase, since rewriting tracked binary/
++log history is a bigger, more disruptive decision than adding install
++scripts and deserves its own explicit sign-off.
+diff --git a/deploy/install-service.bat b/deploy/install-service.bat
+new file mode 100644
+index 0000000..5854fbe
+--- /dev/null
++++ b/deploy/install-service.bat
+@@ -0,0 +1,84 @@
++@echo off
++setlocal enabledelayedexpansion
++
++rem ============================================================================
++rem Matica Printer Agent - Windows Service install script
++rem ============================================================================
++rem Must be run from an elevated (Administrator) command prompt - `sc create`
++rem and `sc failure` both require administrator rights; a non-elevated run
++rem fails with "Access is denied" from `sc`, not from this script.
++rem
++rem Run this from the folder containing invetoryBackGroundServices.exe (i.e.
++rem the actual publish output - see the deploy/README.md in this same folder
++rem for exactly which folder that is and why it needs saying explicitly).
++
++rem Service name registered with the Service Control Manager. Must match
++rem AddWindowsService's ServiceName in Program.cs ("InvetoryServices") - the
++rem two were previously out of sync (this script used to register
++rem "MyWindowsServiceApp" while the running process identified itself
++rem internally as "InvetoryServices"), which risked confusing Event Viewer
++rem entries and made the SCM name and the app's own name impossible to
++rem correlate. Confirmed by reading the actual previous script, not assumed.
++set SERVICE_NAME=InvetoryServices
++set SERVICE_DISPLAY_NAME=Matica Printer Agent (InvetoryServices)
++set SERVICE_DESCRIPTION=Drives the Matica S3300e card printer over the LAN and reconciles print results with the Inventory API.
++set EXE_PATH=%~dp0invetoryBackGroundServices.exe
++
++echo Installing %SERVICE_NAME% service...
++echo   Executable: %EXE_PATH%
++echo.
++
++if not exist "%EXE_PATH%" (
++    echo ERROR: %EXE_PATH% was not found.
++    echo Run this script from the folder containing invetoryBackGroundServices.exe,
++    echo not from the repo's deploy\ folder directly.
++    exit /b 1
++)
++
++sc query %SERVICE_NAME% >nul 2>&1
++if not errorlevel 1 (
++    echo ERROR: a service named %SERVICE_NAME% already exists.
++    echo Run uninstall-service.bat first if you intend to reinstall it.
++    exit /b 1
++)
++
++sc create %SERVICE_NAME% binPath= "%EXE_PATH%" start= auto DisplayName= "%SERVICE_DISPLAY_NAME%"
++if errorlevel 1 (
++    echo ERROR: sc create failed - see the output above.
++    exit /b 1
++)
++
++sc description %SERVICE_NAME% "%SERVICE_DESCRIPTION%"
++
++rem Automatic recovery: restart 5 seconds after each of the first three
++rem failures within a rolling 24-hour (86400-second) window, then stop
++rem trying - a persistently crashing service needs a human to look at it,
++rem not an infinite restart loop that masks the underlying problem.
++rem
++rem This was entirely absent before this script existed in this form -
++rem confirmed by reading the previous version, which called only
++rem `sc create ... start= auto` with no `sc failure` configured at all, so
++rem a crash simply left the service down until someone happened to notice.
++sc failure %SERVICE_NAME% reset= 86400 actions= restart/5000/restart/5000/restart/5000
++if errorlevel 1 (
++    echo WARNING: sc failure did not apply cleanly - the service was created
++    echo but will not restart automatically after a crash. Re-run:
++    echo   sc failure %SERVICE_NAME% reset= 86400 actions= restart/5000/restart/5000/restart/5000
++)
++
++echo.
++echo Starting %SERVICE_NAME%...
++sc start %SERVICE_NAME%
++if errorlevel 1 (
++    echo WARNING: the service was created and configured, but failed to start.
++    echo Check its status with status-service.bat and the AppLog folder next to
++    echo the executable for why - a missing signing key or credential (see the
++    echo appsettings.json fail-fast checks in Program.cs) is the most likely cause.
++    exit /b 1
++)
++
++echo.
++echo Service installed, configured for automatic recovery, and started.
++echo Use start-service.bat / stop-service.bat / restart-service.bat / status-service.bat
++echo to control it, or uninstall-service.bat to remove it entirely.
++pause
+diff --git a/deploy/restart-service.bat b/deploy/restart-service.bat
+new file mode 100644
+index 0000000..04b905e
+--- /dev/null
++++ b/deploy/restart-service.bat
+@@ -0,0 +1,30 @@
++@echo off
++setlocal
++
++rem Restarts the Matica Printer Agent Windows Service. Requires an elevated
++rem (Administrator) command prompt.
++set SERVICE_NAME=InvetoryServices
++
++echo Stopping %SERVICE_NAME%...
++sc stop %SERVICE_NAME% >nul 2>&1
++
++rem Poll for STOPPED rather than a fixed sleep, so this doesn't wait longer
++rem than necessary on a fast shutdown or fail on a slow one - `sc start`
++rem issued while the previous instance is still mid-shutdown can otherwise
++rem race it.
++:wait_stopped
++sc query %SERVICE_NAME% | find "STOPPED" >nul
++if errorlevel 1 (
++    timeout /t 1 /nobreak >nul
++    goto wait_stopped
++)
++
++echo Starting %SERVICE_NAME%...
++sc start %SERVICE_NAME%
++if errorlevel 1 (
++    echo WARNING: restart failed - check status-service.bat and the AppLog folder.
++    exit /b 1
++)
++
++echo %SERVICE_NAME% restarted.
++pause
+diff --git a/deploy/start-service.bat b/deploy/start-service.bat
+new file mode 100644
+index 0000000..141ed8a
+--- /dev/null
++++ b/deploy/start-service.bat
+@@ -0,0 +1,6 @@
++@echo off
++rem Starts the Matica Printer Agent Windows Service. Requires an elevated
++rem (Administrator) command prompt.
++set SERVICE_NAME=InvetoryServices
++sc start %SERVICE_NAME%
++pause
+diff --git a/deploy/status-service.bat b/deploy/status-service.bat
+new file mode 100644
+index 0000000..68a0988
+--- /dev/null
++++ b/deploy/status-service.bat
+@@ -0,0 +1,19 @@
++@echo off
++rem Shows the Matica Printer Agent Windows Service's current state and its
++rem configured automatic-recovery actions. Does not require elevation -
++rem `sc query`/`sc qfailure` are read-only.
++set SERVICE_NAME=InvetoryServices
++
++echo === Service state ===
++sc query %SERVICE_NAME%
++if errorlevel 1 (
++    echo No service named %SERVICE_NAME% is registered - run install-service.bat.
++    pause
++    exit /b 1
++)
++
++echo.
++echo === Automatic-recovery configuration ===
++sc qfailure %SERVICE_NAME%
++
++pause
+diff --git a/deploy/stop-service.bat b/deploy/stop-service.bat
+new file mode 100644
+index 0000000..fa37abd
+--- /dev/null
++++ b/deploy/stop-service.bat
+@@ -0,0 +1,8 @@
++@echo off
++rem Stops the Matica Printer Agent Windows Service. Requires an elevated
++rem (Administrator) command prompt. Does not affect its automatic-recovery
++rem configuration - sc failure's restart actions only trigger on an
++rem unexpected process exit, not on a deliberate `sc stop`.
++set SERVICE_NAME=InvetoryServices
++sc stop %SERVICE_NAME%
++pause
+diff --git a/deploy/uninstall-service.bat b/deploy/uninstall-service.bat
+new file mode 100644
+index 0000000..b07cf4b
+--- /dev/null
++++ b/deploy/uninstall-service.bat
+@@ -0,0 +1,40 @@
++@echo off
++setlocal
++
++rem ============================================================================
++rem Matica Printer Agent - Windows Service uninstall script
++rem ============================================================================
++rem Must be run from an elevated (Administrator) command prompt.
++
++set SERVICE_NAME=InvetoryServices
++
++sc query %SERVICE_NAME% >nul 2>&1
++if errorlevel 1 (
++    echo No service named %SERVICE_NAME% is registered - nothing to remove.
++    pause
++    exit /b 0
++)
++
++echo Stopping %SERVICE_NAME% (if running)...
++sc stop %SERVICE_NAME% >nul 2>&1
++
++rem sc stop is asynchronous - give the process a moment to actually exit
++rem before deleting the service definition out from under it.
++:wait_stopped
++sc query %SERVICE_NAME% | find "STOPPED" >nul
++if errorlevel 1 (
++    timeout /t 1 /nobreak >nul
++    goto wait_stopped
++)
++
++echo Removing %SERVICE_NAME%...
++sc delete %SERVICE_NAME%
++if errorlevel 1 (
++    echo ERROR: sc delete failed - see the output above.
++    exit /b 1
++)
++
++echo Service removed. Its automatic-recovery configuration (sc failure) is
++echo removed along with it - reinstalling will need install-service.bat again,
++echo not a separate recovery-configuration step.
++pause
+diff --git a/publish/install-service.bat b/publish/install-service.bat
+index 1582aee..a3607ad 100644
+--- a/publish/install-service.bat
++++ b/publish/install-service.bat
+@@ -1,11 +1,71 @@
+-SET SERVICE_NAME=MyWindowsServiceApp
+-SET EXE_PATH=%~dp0invetoryBackGroundServices.exe
++@echo off
++setlocal enabledelayedexpansion
++
++rem ============================================================================
++rem Matica Printer Agent - Windows Service install script
++rem ============================================================================
++rem Must be run from an elevated (Administrator) command prompt - `sc create`
++rem and `sc failure` both require administrator rights.
++rem
++rem Fixed here: SERVICE_NAME used to be "MyWindowsServiceApp", which did not
++rem match Program.cs's AddWindowsService ServiceName ("InvetoryServices") -
++rem the two identities were out of sync, risking confusing Event Viewer
++rem entries and making the SCM name and the app's own internal name
++rem impossible to correlate. Also added: automatic-recovery configuration
++rem (sc failure), which did not exist at all before - a crash simply left
++rem the service down until someone noticed. See ..\deploy\README.md for the
++rem canonical, maintained copy of these scripts and the full deployment
++rem checklist - this file is kept in sync with that one.
++
++set SERVICE_NAME=InvetoryServices
++set SERVICE_DISPLAY_NAME=Matica Printer Agent (InvetoryServices)
++set SERVICE_DESCRIPTION=Drives the Matica S3300e card printer over the LAN and reconciles print results with the Inventory API.
++set EXE_PATH=%~dp0invetoryBackGroundServices.exe
+ 
+ echo Installing %SERVICE_NAME% service...
++echo   Executable: %EXE_PATH%
++echo.
++
++if not exist "%EXE_PATH%" (
++    echo ERROR: %EXE_PATH% was not found. Run this script from the folder
++    echo containing invetoryBackGroundServices.exe.
++    exit /b 1
++)
++
++sc query %SERVICE_NAME% >nul 2>&1
++if not errorlevel 1 (
++    echo ERROR: a service named %SERVICE_NAME% already exists.
++    echo Run uninstall-service.bat first if you intend to reinstall it.
++    exit /b 1
++)
+ 
+-sc create %SERVICE_NAME% binPath= "%EXE_PATH%" start= auto
++sc create %SERVICE_NAME% binPath= "%EXE_PATH%" start= auto DisplayName= "%SERVICE_DISPLAY_NAME%"
++if errorlevel 1 (
++    echo ERROR: sc create failed - see the output above.
++    exit /b 1
++)
++
++sc description %SERVICE_NAME% "%SERVICE_DESCRIPTION%"
++
++rem Automatic recovery: restart 5 seconds after each of the first three
++rem failures within a rolling 24-hour window, then stop trying.
++sc failure %SERVICE_NAME% reset= 86400 actions= restart/5000/restart/5000/restart/5000
++if errorlevel 1 (
++    echo WARNING: sc failure did not apply cleanly - the service was created
++    echo but will not restart automatically after a crash. Re-run:
++    echo   sc failure %SERVICE_NAME% reset= 86400 actions= restart/5000/restart/5000/restart/5000
++)
++
++echo.
++echo Starting %SERVICE_NAME%...
+ sc start %SERVICE_NAME%
++if errorlevel 1 (
++    echo WARNING: the service was created and configured, but failed to start.
++    echo Check the AppLog folder next to the executable for why - a missing
++    echo signing key or credential is the most likely cause.
++    exit /b 1
++)
+ 
+ echo.
+-echo ✅ Service installed and started successfully.
++echo Service installed, configured for automatic recovery, and started.
+ pause
+diff --git a/publish/restart-service.bat b/publish/restart-service.bat
+new file mode 100644
+index 0000000..04b905e
+--- /dev/null
++++ b/publish/restart-service.bat
+@@ -0,0 +1,30 @@
++@echo off
++setlocal
++
++rem Restarts the Matica Printer Agent Windows Service. Requires an elevated
++rem (Administrator) command prompt.
++set SERVICE_NAME=InvetoryServices
++
++echo Stopping %SERVICE_NAME%...
++sc stop %SERVICE_NAME% >nul 2>&1
++
++rem Poll for STOPPED rather than a fixed sleep, so this doesn't wait longer
++rem than necessary on a fast shutdown or fail on a slow one - `sc start`
++rem issued while the previous instance is still mid-shutdown can otherwise
++rem race it.
++:wait_stopped
++sc query %SERVICE_NAME% | find "STOPPED" >nul
++if errorlevel 1 (
++    timeout /t 1 /nobreak >nul
++    goto wait_stopped
++)
++
++echo Starting %SERVICE_NAME%...
++sc start %SERVICE_NAME%
++if errorlevel 1 (
++    echo WARNING: restart failed - check status-service.bat and the AppLog folder.
++    exit /b 1
++)
++
++echo %SERVICE_NAME% restarted.
++pause
+diff --git a/publish/start-service.bat b/publish/start-service.bat
+new file mode 100644
+index 0000000..141ed8a
+--- /dev/null
++++ b/publish/start-service.bat
+@@ -0,0 +1,6 @@
++@echo off
++rem Starts the Matica Printer Agent Windows Service. Requires an elevated
++rem (Administrator) command prompt.
++set SERVICE_NAME=InvetoryServices
++sc start %SERVICE_NAME%
++pause
+diff --git a/publish/status-service.bat b/publish/status-service.bat
+new file mode 100644
+index 0000000..68a0988
+--- /dev/null
++++ b/publish/status-service.bat
+@@ -0,0 +1,19 @@
++@echo off
++rem Shows the Matica Printer Agent Windows Service's current state and its
++rem configured automatic-recovery actions. Does not require elevation -
++rem `sc query`/`sc qfailure` are read-only.
++set SERVICE_NAME=InvetoryServices
++
++echo === Service state ===
++sc query %SERVICE_NAME%
++if errorlevel 1 (
++    echo No service named %SERVICE_NAME% is registered - run install-service.bat.
++    pause
++    exit /b 1
++)
++
++echo.
++echo === Automatic-recovery configuration ===
++sc qfailure %SERVICE_NAME%
++
++pause
+diff --git a/publish/stop-service.bat b/publish/stop-service.bat
+new file mode 100644
+index 0000000..fa37abd
+--- /dev/null
++++ b/publish/stop-service.bat
+@@ -0,0 +1,8 @@
++@echo off
++rem Stops the Matica Printer Agent Windows Service. Requires an elevated
++rem (Administrator) command prompt. Does not affect its automatic-recovery
++rem configuration - sc failure's restart actions only trigger on an
++rem unexpected process exit, not on a deliberate `sc stop`.
++set SERVICE_NAME=InvetoryServices
++sc stop %SERVICE_NAME%
++pause
+diff --git a/publish/uninstall-service.bat b/publish/uninstall-service.bat
+index 42e269d..350a8bf 100644
+--- a/publish/uninstall-service.bat
++++ b/publish/uninstall-service.bat
+@@ -1,5 +1,42 @@
+ @echo off
+-sc stop MyWindowsServiceApp
+-sc delete MyWindowsServiceApp
+-echo Service uninstalled.
++setlocal
++
++rem ============================================================================
++rem Matica Printer Agent - Windows Service uninstall script
++rem ============================================================================
++rem Must be run from an elevated (Administrator) command prompt.
++rem
++rem Fixed here: SERVICE_NAME used to be "MyWindowsServiceApp" - see
++rem install-service.bat's own comment for why that was wrong. Also now stops
++rem the service and waits for it to actually reach STOPPED before deleting
++rem it, instead of stopping and deleting in the same breath (sc stop is
++rem asynchronous, so the previous version could race a still-running process).
++
++set SERVICE_NAME=InvetoryServices
++
++sc query %SERVICE_NAME% >nul 2>&1
++if errorlevel 1 (
++    echo No service named %SERVICE_NAME% is registered - nothing to remove.
++    pause
++    exit /b 0
++)
++
++echo Stopping %SERVICE_NAME% (if running)...
++sc stop %SERVICE_NAME% >nul 2>&1
++
++:wait_stopped
++sc query %SERVICE_NAME% | find "STOPPED" >nul
++if errorlevel 1 (
++    timeout /t 1 /nobreak >nul
++    goto wait_stopped
++)
++
++echo Removing %SERVICE_NAME%...
++sc delete %SERVICE_NAME%
++if errorlevel 1 (
++    echo ERROR: sc delete failed - see the output above.
++    exit /b 1
++)
++
++echo Service removed.
+ pause
+-- 
+2.43.0
+

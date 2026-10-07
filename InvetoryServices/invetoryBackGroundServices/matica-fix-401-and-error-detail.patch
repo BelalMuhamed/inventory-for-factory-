@@ -1,0 +1,430 @@
+From e9af7c1bb9bb53eee659a9fccc0d514ef993a41a Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Sun, 23 Aug 2026 08:11:56 +0000
+Subject: [PATCH] Fix silent 401/403 bodies and dropped backend error detail
+
+Two real bugs found during hardware validation, both traced to their
+actual root cause rather than patched at the symptom.
+
+1. Empty 401/403 responses
+
+app.UseAuthorization() was already correctly placed after
+UseAuthentication(), but a failed authentication/authorization check
+never throws - it short-circuits the pipeline by setting the status code
+directly. GlobalExceptionMiddleware only reacts to thrown exceptions, so
+it never saw these at all; the caller got a bare empty 401/403 with no
+body, on every single auth failure since the foundation phase.
+
+Fixed with JwtBearerEvents.OnChallenge/OnForbidden on the JwtBearer
+registration in Program.cs, writing the standard ApiResponse<T> envelope
+directly to the response. OnChallenge calls HandleResponse() first so
+the default (empty) challenge behavior doesn't also run afterward and
+clobber what was just written. Two new error codes: Machine.
+Unauthenticated (no/invalid/expired/wrong-key token) and Machine.
+Forbidden (a structurally valid token that fails the PrintAgentOnly
+policy's claim check - i.e. not a Print Agent token at all).
+
+Extracted the shared "localize this MachineError and write it straight
+to an HttpResponse" logic - previously duplicated inside
+GlobalExceptionMiddleware - into Common/ErrorResponseWriter, since the
+new auth event handlers need the exact same thing and duplicating it a
+third time was the wrong call. GlobalExceptionMiddleware now just calls
+it.
+
+2. Backend-supplied error detail silently dropped
+
+The actual bug: MachineError.MessageArg was designed to carry contextual
+detail (e.g. the Inventory API's specific rejection reason) for
+substitution into a resx {0} placeholder - but every single entry in
+both Messages.resx and Messages.ar.resx was missing {0} entirely. Since
+this catalogue existed. IStringLocalizer's format-args indexer calls
+string.Format under the hood, which silently ignores an argument that
+has no placeholder to fill rather than erroring - so "insufficient
+stock" (or whatever the Inventory API actually said) was being computed,
+passed all the way to the presentation edge, and then thrown away there,
+every time, for every error code that carries a detail.
+
+Fixed by not relying on resx placeholder substitution at all:
+MachineError.ToApiError() and both presentation-edge consumers
+(LocalizeErrorResultFilter, ErrorResponseWriter) now localize the base
+message by code with no format args, then append MessageArg in code via
+a new shared ApiError.ComposeMessage(base, detail) helper. This also
+fixes the same bug in the English default path, which had it too
+(ToApiError() was setting Message = Message, never appending MessageArg
+at all, independent of localization) - so the fix holds even if a
+future error code's resx entry is missing or the requested culture isn't
+covered.
+
+No dotnet SDK or NuGet access in the authoring environment. Verified by
+a full-repo symbol-table cross-check (same four already-known false
+positives as every prior phase - properties literally named Error on
+four unrelated types, confirmed again by grep, nothing new), brace
+balance across every touched file, JSON/XML validity on appsettings.json
+and both resx files, and by tracing the exact reported scenario
+(Backend Call #1's insufficient-stock rejection) through
+MachineController.Print -> MachineErrors.BackendRejected ->
+MachineError.ToApiError/the two consumers by hand to confirm the detail
+survives every hop. Please build locally and re-run both the auth-
+failure and insufficient-stock scenarios against a real request before
+considering this closed.
+---
+ .../Common/ApiContracts.cs                    | 15 +++++-
+ .../Common/ErrorResponseWriter.cs             | 53 +++++++++++++++++++
+ .../Common/MachineErrors.cs                   | 39 ++++++++++++--
+ .../Filters/LocalizeErrorResultFilter.cs      | 11 ++--
+ .../Middleware/GlobalExceptionMiddleware.cs   | 46 ++++------------
+ invetoryBackGroundServices/Program.cs         | 32 +++++++++++
+ .../Resources/Localization/Messages.ar.resx   |  6 +++
+ .../Resources/Localization/Messages.resx      |  6 +++
+ 8 files changed, 162 insertions(+), 46 deletions(-)
+ create mode 100644 invetoryBackGroundServices/Common/ErrorResponseWriter.cs
+
+diff --git a/invetoryBackGroundServices/Common/ApiContracts.cs b/invetoryBackGroundServices/Common/ApiContracts.cs
+index 38f31cc..5e736d5 100644
+--- a/invetoryBackGroundServices/Common/ApiContracts.cs
++++ b/invetoryBackGroundServices/Common/ApiContracts.cs
+@@ -85,10 +85,21 @@ namespace invetoryBackGroundServices.Common
+         public string? MessageArg { get; init; }
+ 
+         /// <summary>
+-        /// Field-level errors, keyed by field name. Populated only for 422 failures; null
+-        /// otherwise so it is omitted from the serialized body.
++        /// Optional field-level errors, keyed by field name. Populated only for 422 failures;
++        /// null otherwise so it is omitted from the serialized body.
+         /// </summary>
+         public IReadOnlyDictionary<string, string[]>? ValidationErrors { get; init; }
++
++        /// <summary>
++        /// Appends <paramref name="detail"/> to <paramref name="baseMessage"/> when present,
++        /// otherwise returns <paramref name="baseMessage"/> unchanged. The single place this
++        /// composition happens, used identically by <see cref="MachineError.ToApiError"/> (the
++        /// English default) and by the localization filter/middleware (the culture-specific
++        /// text) - see <see cref="MachineError.MessageArg"/>'s doc comment for why this is a
++        /// plain append rather than a resx <c>{0}</c> substitution.
++        /// </summary>
++        public static string ComposeMessage(string baseMessage, string? detail) =>
++            string.IsNullOrWhiteSpace(detail) ? baseMessage : $"{baseMessage} {detail}";
+     }
+ 
+     /// <summary>
+diff --git a/invetoryBackGroundServices/Common/ErrorResponseWriter.cs b/invetoryBackGroundServices/Common/ErrorResponseWriter.cs
+new file mode 100644
+index 0000000..1bf3f7c
+--- /dev/null
++++ b/invetoryBackGroundServices/Common/ErrorResponseWriter.cs
+@@ -0,0 +1,53 @@
++using System.Text.Json;
++using System.Threading.Tasks;
++using invetoryBackGroundServices.Resources.Localization;
++using Microsoft.AspNetCore.Http;
++using Microsoft.Extensions.Localization;
++
++namespace invetoryBackGroundServices.Common
++{
++    /// <summary>
++    /// Writes a localized <see cref="ApiResponse{T}"/> failure directly to an
++    /// <see cref="HttpResponse"/>, bypassing MVC entirely. Needed in two places that sit outside
++    /// the controller/filter pipeline and so can never go through
++    /// <see cref="Filters.LocalizeErrorResultFilter"/>: <c>GlobalExceptionMiddleware</c> (runs
++    /// before MVC even starts) and the JwtBearer <c>OnChallenge</c>/<c>OnForbidden</c> events in
++    /// <see cref="Program"/> (authentication/authorization failures never reach a controller
++    /// action at all). Both used to duplicate this logic; kept in one place now so a future fix
++    /// only needs to happen once.
++    /// </summary>
++    public static class ErrorResponseWriter
++    {
++        private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
++
++        /// <summary>
++        /// Localizes <paramref name="error"/>'s base message by its code, appends
++        /// <see cref="MachineError.MessageArg"/> if present (see that property's doc comment for
++        /// why this is an append rather than a resx placeholder substitution), and writes the
++        /// resulting <see cref="ApiResponse{T}"/> to <paramref name="response"/> with the status
++        /// code the error's category maps to.
++        /// </summary>
++        public static async Task WriteAsync(
++            HttpResponse response, MachineError error, IStringLocalizer<Messages> localizer)
++        {
++            if (response.HasStarted)
++            {
++                return;
++            }
++
++            ApiError apiError = error.ToApiError();
++
++            LocalizedString localized = localizer[apiError.Code];
++            if (!localized.ResourceNotFound)
++            {
++                apiError.Message = ApiError.ComposeMessage(localized.Value, error.MessageArg);
++            }
++
++            response.Clear();
++            response.StatusCode = error.StatusCode;
++            response.ContentType = "application/json";
++
++            await response.WriteAsync(JsonSerializer.Serialize(ApiResponse<object>.Fail(apiError), JsonOptions));
++        }
++    }
++}
+diff --git a/invetoryBackGroundServices/Common/MachineErrors.cs b/invetoryBackGroundServices/Common/MachineErrors.cs
+index cde8010..eaccb17 100644
+--- a/invetoryBackGroundServices/Common/MachineErrors.cs
++++ b/invetoryBackGroundServices/Common/MachineErrors.cs
+@@ -56,7 +56,17 @@ namespace invetoryBackGroundServices.Common
+     /// <param name="Code">Stable identifier, also the localization resource key.</param>
+     /// <param name="Category">One of <see cref="MachineErrorCategory"/>.</param>
+     /// <param name="Message">English default message.</param>
+-    /// <param name="MessageArg">Optional <c>{0}</c> substitution argument.</param>
++    /// <param name="MessageArg">
++    /// Optional contextual detail (e.g. the Inventory API's own business-rejection reason, or an
++    /// exception message). Appended to the base message by <see cref="ToApiError"/> and by the
++    /// localization filter/middleware - not substituted via a resx <c>{0}</c> placeholder. That
++    /// distinction matters: a placeholder-based approach silently drops this detail whenever
++    /// <see cref="MessageArg"/> is null, because <c>IStringLocalizer</c>'s no-args indexer
++    /// returns the resource text completely unformatted rather than filling the placeholder with
++    /// anything - which is exactly how this went wrong the first time (every resx entry in this
++    /// catalogue was missing <c>{0}</c> entirely, so the detail was computed, passed, and then
++    /// silently discarded at every call site that supplied one).
++    /// </param>
+     public readonly record struct MachineError(string Code, string Category, string Message, string? MessageArg = null)
+     {
+         /// <summary>HTTP status this error's category maps to.</summary>
+@@ -74,12 +84,16 @@ namespace invetoryBackGroundServices.Common
+             _ => 500
+         };
+ 
+-        /// <summary>Projects this error onto the wire contract.</summary>
++        /// <summary>
++        /// Projects this error onto the wire contract, with <see cref="MessageArg"/> (if present)
++        /// appended to <see cref="Message"/> - see <see cref="MessageArg"/>'s own doc comment for
++        /// why appending rather than substituting a placeholder.
++        /// </summary>
+         public ApiError ToApiError() => new()
+         {
+             Code = Code,
+             Category = Category,
+-            Message = Message,
++            Message = ApiError.ComposeMessage(Message, MessageArg),
+             MessageArg = MessageArg
+         };
+     }
+@@ -159,5 +173,24 @@ namespace invetoryBackGroundServices.Common
+         public static MachineError BackendUnavailable(string? detail = null) => new(
+             "Machine.BackendUnavailable", MachineErrorCategory.BackendUnavailable,
+             "Could not reach the Inventory API to validate or record this print.", detail);
++
++        /// <summary>
++        /// No Print Agent token was supplied, or the supplied one is missing, malformed, expired,
++        /// or signed with the wrong key. Used by the JwtBearer <c>OnChallenge</c> handler in
++        /// <see cref="Program"/> - authentication failure never reaches a controller action, so
++        /// nothing in this catalogue was ever returning a body for this case before.
++        /// </summary>
++        public static MachineError Unauthenticated() => new(
++            "Machine.Unauthenticated", MachineErrorCategory.Unauthorized,
++            "A valid Print Agent token is required.");
++
++        /// <summary>
++        /// A token was supplied and validated, but it does not satisfy the <c>PrintAgentOnly</c>
++        /// policy (missing the <c>purpose</c> claim - i.e. a token that is structurally valid but
++        /// was never meant for this service). Used by the JwtBearer <c>OnForbidden</c> handler.
++        /// </summary>
++        public static MachineError Forbidden() => new(
++            "Machine.Forbidden", MachineErrorCategory.Forbidden,
++            "This token is not permitted to perform this operation.");
+     }
+ }
+diff --git a/invetoryBackGroundServices/Filters/LocalizeErrorResultFilter.cs b/invetoryBackGroundServices/Filters/LocalizeErrorResultFilter.cs
+index c89b0ee..e6cf154 100644
+--- a/invetoryBackGroundServices/Filters/LocalizeErrorResultFilter.cs
++++ b/invetoryBackGroundServices/Filters/LocalizeErrorResultFilter.cs
+@@ -32,13 +32,16 @@ namespace invetoryBackGroundServices.Filters
+             if (context.Result is ObjectResult { Value: ILocalizableApiResponse envelope } &&
+                 envelope.Error is { Code.Length: > 0 } error)
+             {
+-                LocalizedString localized = error.MessageArg is null
+-                    ? _localizer[error.Code]
+-                    : _localizer[error.Code, error.MessageArg];
++                // Localize the base message only (no format args) - the detail is appended in
++                // code via ApiError.ComposeMessage, not substituted into a resx placeholder. See
++                // MachineError.MessageArg's doc comment for why: the args-based indexer silently
++                // drops the detail whenever a resource string has no {0}, which every entry in
++                // this catalogue did until this fix.
++                LocalizedString localized = _localizer[error.Code];
+ 
+                 if (!localized.ResourceNotFound)
+                 {
+-                    envelope.ReplaceErrorMessage(localized.Value);
++                    envelope.ReplaceErrorMessage(ApiError.ComposeMessage(localized.Value, error.MessageArg));
+                 }
+             }
+ 
+diff --git a/invetoryBackGroundServices/Middleware/GlobalExceptionMiddleware.cs b/invetoryBackGroundServices/Middleware/GlobalExceptionMiddleware.cs
+index 1db18cc..8f95960 100644
+--- a/invetoryBackGroundServices/Middleware/GlobalExceptionMiddleware.cs
++++ b/invetoryBackGroundServices/Middleware/GlobalExceptionMiddleware.cs
+@@ -1,5 +1,4 @@
+ using System;
+-using System.Text.Json;
+ using System.Threading.Tasks;
+ using invetoryBackGroundServices.Common;
+ using invetoryBackGroundServices.Machine;
+@@ -15,16 +14,16 @@ namespace invetoryBackGroundServices.Middleware
+     /// so controllers never need their own try/catch-and-shape-a-response blocks.
+     /// <para>
+     /// Because this runs outside MVC's filter pipeline, <see cref="Filters.LocalizeErrorResultFilter"/>
+-    /// never sees these responses - so localization is applied here directly, against the same
+-    /// resources and the same culture (already resolved from <c>Accept-Language</c> by the
+-    /// request-localization middleware upstream). Without this, an unhandled failure would be the
+-    /// one response in the service that silently ignored the caller's language.
++    /// never sees these responses - so localization is applied here directly (via
++    /// <see cref="ErrorResponseWriter"/>, shared with the JwtBearer auth event handlers in
++    /// <see cref="Program"/> for the same reason), against the same resources and the same
++    /// culture (already resolved from <c>Accept-Language</c> by the request-localization
++    /// middleware upstream). Without this, an unhandled failure would be the one response in the
++    /// service that silently ignored the caller's language.
+     /// </para>
+     /// </summary>
+     public sealed class GlobalExceptionMiddleware
+     {
+-        private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+-
+         private readonly RequestDelegate _next;
+         private readonly Logger _log;
+ 
+@@ -46,43 +45,16 @@ namespace invetoryBackGroundServices.Middleware
+             {
+                 // Expected, typed hardware failures - already carry the right error/category.
+                 _log.AppendLog($"{ex.GetType().Name}: {ex.Message}", Logger.LogType.Error);
+-                await WriteAsync(context, ex.Error, localizer);
++                await ErrorResponseWriter.WriteAsync(context.Response, ex.Error, localizer);
+             }
+             catch (Exception ex)
+             {
+                 // Genuinely unexpected: log the detail, return an opaque message. The exception
+                 // text is never sent to the caller.
+                 _log.AppendLog($"Unhandled {ex.GetType().Name}: {ex}", Logger.LogType.Error);
+-                await WriteAsync(context, MachineErrors.Internal(), localizer);
+-            }
+-        }
+-
+-        private static async Task WriteAsync(
+-            HttpContext context, MachineError error, IStringLocalizer<Messages> localizer)
+-        {
+-            if (context.Response.HasStarted)
+-            {
+-                // Too late to replace the response; the exception is already logged above.
+-                return;
+-            }
+-
+-            ApiError apiError = error.ToApiError();
+-
+-            LocalizedString localized = apiError.MessageArg is null
+-                ? localizer[apiError.Code]
+-                : localizer[apiError.Code, apiError.MessageArg];
+-
+-            if (!localized.ResourceNotFound)
+-            {
+-                apiError.Message = localized.Value;
++                await ErrorResponseWriter.WriteAsync(context.Response, MachineErrors.Internal(), localizer);
+             }
+-
+-            context.Response.Clear();
+-            context.Response.StatusCode = error.StatusCode;
+-            context.Response.ContentType = "application/json";
+-
+-            await context.Response.WriteAsync(
+-                JsonSerializer.Serialize(ApiResponse<object>.Fail(apiError), JsonOptions));
+         }
+     }
+ }
++
+diff --git a/invetoryBackGroundServices/Program.cs b/invetoryBackGroundServices/Program.cs
+index fed71a2..29b5f58 100644
+--- a/invetoryBackGroundServices/Program.cs
++++ b/invetoryBackGroundServices/Program.cs
+@@ -1,13 +1,16 @@
+ 
++using invetoryBackGroundServices.Common;
+ using invetoryBackGroundServices.Machine;
+ using invetoryBackGroundServices.Middleware;
+ using invetoryBackGroundServices.Options;
++using invetoryBackGroundServices.Resources.Localization;
+ using invetoryBackGroundServices.Security;
+ using invetoryBackGroundServices.Services;
+ using MATICA_S3300e.LAN;
+ using Microsoft.AspNetCore.Authentication.JwtBearer;
+ using Microsoft.AspNetCore.Authorization;
+ using Microsoft.AspNetCore.Localization;
++using Microsoft.Extensions.Localization;
+ using Microsoft.Extensions.Options;
+ using Microsoft.IdentityModel.Tokens;
+ using System.Globalization;
+@@ -119,6 +122,35 @@ namespace invetoryBackGroundServices
+                         ValidAudience = printAgentAuth.Audience,
+                         IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(printAgentAuth.SigningKey))
+                     };
++
++                    // Without these, a missing/invalid/expired token or a token that fails the
++                    // PrintAgentOnly policy's claim check never reaches a controller action, so
++                    // the standard ApiResponse<T> envelope was never being written at all - the
++                    // caller just saw an empty 401/403.
++                    options.Events = new JwtBearerEvents
++                    {
++                        OnChallenge = async context =>
++                        {
++                            // Fires for no token, a malformed token, an expired token, or one
++                            // signed with the wrong key. HandleResponse() stops the default
++                            // handler from also writing its own (empty) response afterward.
++                            context.HandleResponse();
++                            var localizer = context.HttpContext.RequestServices
++                                .GetRequiredService<IStringLocalizer<Messages>>();
++                            await ErrorResponseWriter.WriteAsync(
++                                context.HttpContext.Response, MachineErrors.Unauthenticated(), localizer);
++                        },
++                        OnForbidden = async context =>
++                        {
++                            // Fires when the token validated but failed the PrintAgentOnly
++                            // policy's claim check - structurally valid, but not a Print Agent
++                            // token (missing the purpose claim).
++                            var localizer = context.HttpContext.RequestServices
++                                .GetRequiredService<IStringLocalizer<Messages>>();
++                            await ErrorResponseWriter.WriteAsync(
++                                context.HttpContext.Response, MachineErrors.Forbidden(), localizer);
++                        }
++                    };
+                 });
+             builder.Services.AddAuthorization(options =>
+             {
+diff --git a/invetoryBackGroundServices/Resources/Localization/Messages.ar.resx b/invetoryBackGroundServices/Resources/Localization/Messages.ar.resx
+index a501040..33b26b4 100644
+--- a/invetoryBackGroundServices/Resources/Localization/Messages.ar.resx
++++ b/invetoryBackGroundServices/Resources/Localization/Messages.ar.resx
+@@ -94,4 +94,10 @@
+   <data name="Machine.BackendUnavailable" xml:space="preserve">
+     <value>مقدرناش نوصل لـ Inventory API عشان نتأكد من الكارت أو نسجل نتيجة الطباعة.</value>
+   </data>
++  <data name="Machine.Unauthenticated" xml:space="preserve">
++    <value>لازم توكن صالح لجهاز الطباعة.</value>
++  </data>
++  <data name="Machine.Forbidden" xml:space="preserve">
++    <value>التوكن ده مش مسموح له يعمل العملية دي.</value>
++  </data>
+ </root>
+diff --git a/invetoryBackGroundServices/Resources/Localization/Messages.resx b/invetoryBackGroundServices/Resources/Localization/Messages.resx
+index 404b0ab..042476a 100644
+--- a/invetoryBackGroundServices/Resources/Localization/Messages.resx
++++ b/invetoryBackGroundServices/Resources/Localization/Messages.resx
+@@ -94,4 +94,10 @@
+   <data name="Machine.BackendUnavailable" xml:space="preserve">
+     <value>Could not reach the Inventory API to validate or record this print.</value>
+   </data>
++  <data name="Machine.Unauthenticated" xml:space="preserve">
++    <value>A valid Print Agent token is required.</value>
++  </data>
++  <data name="Machine.Forbidden" xml:space="preserve">
++    <value>This token is not permitted to perform this operation.</value>
++  </data>
+ </root>
+-- 
+2.43.0
+

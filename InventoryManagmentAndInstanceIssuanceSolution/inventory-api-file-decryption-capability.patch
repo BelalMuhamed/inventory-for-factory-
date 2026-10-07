@@ -1,0 +1,266 @@
+From 1c4d705d4b34bfd5e45169f4b92703f0ede418fc Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Tue, 25 Aug 2026 09:45:03 +0000
+Subject: [PATCH] Super-Admin decryption phase (1/2): shared AES-GCM decryption
+ capability on the Inventory API
+
+Ports the decrypt side of the Printer Agent's own IFileEncryptionService/
+AesGcmFileEncryptionService to this repo - same format
+(v1.{nonce}.{tag}.{ciphertext}), same algorithm (AES-256-GCM, 12-byte
+nonce, 16-byte tag), deliberately not reimplemented independently.
+
+Named IPrintAgentFileDecryptionService/AesGcmPrintAgentFileDecryptionService
+rather than literally IFileEncryptionService, on purpose: this side only
+ever decrypts (it never writes a Printer Agent log or outbox file, only
+reads and decrypts one that the Printer Agent already wrote), so an
+Encrypt method here would be dead code with no real caller. Flagging
+this naming deviation explicitly since the brief suggested
+IFileEncryptionService as an example name.
+
+FileEncryptionOptions.Key must be byte-for-byte identical to the
+Printer Agent's own FileEncryption:Key - a matched pair, the same
+relationship PrintAgentTokenOptions.SigningKey already has with
+PrintAgentAuth:SigningKey on the Printer Agent side. Explicitly NOT
+Jwt:SigningKey and not derived from it - this key can only ever decrypt
+file content, nothing about a session or a token, so the Printer Agent
+already holding it (by necessity, to encrypt its own files) does not
+change what a compromised branch machine could do.
+
+Registered in InfrastructureServiceRegistration.cs with the same
+fail-fast Options pattern as every other secret in this project
+(PrintAgentTokenOptions immediately above it in the same file) -
+required, and must decode to exactly 32 bytes (AES-256).
+
+This is the file-decryption capability only - genuinely independent of
+how the encrypted bytes physically reach this service, which is a real,
+unresolved architectural question (see accompanying message). No point
+gating this half of the work on that answer.
+
+No dotnet SDK in the authoring environment. Verified by brace balance
+across every touched/new file and JSON validity on appsettings.json.
+Please build locally before merging.
+---
+ .../IPrintAgentFileDecryptionService.cs       | 42 ++++++++++
+ .../Options/FileEncryptionOptions.cs          | 29 +++++++
+ .../InfrastructureServiceRegistration.cs      | 16 ++++
+ .../AesGcmPrintAgentFileDecryptionService.cs  | 81 +++++++++++++++++++
+ .../appsettings.json                          |  3 +
+ 5 files changed, 171 insertions(+)
+ create mode 100644 ApplicationLayer/Contracts/IPrintAgentFileDecryptionService.cs
+ create mode 100644 ApplicationLayer/Options/FileEncryptionOptions.cs
+ create mode 100644 InfrastructureLayer/Security/AesGcmPrintAgentFileDecryptionService.cs
+
+diff --git a/ApplicationLayer/Contracts/IPrintAgentFileDecryptionService.cs b/ApplicationLayer/Contracts/IPrintAgentFileDecryptionService.cs
+new file mode 100644
+index 0000000..f131c71
+--- /dev/null
++++ b/ApplicationLayer/Contracts/IPrintAgentFileDecryptionService.cs
+@@ -0,0 +1,42 @@
++namespace ApplicationLayer.Contracts
++{
++    /// <summary>
++    /// Decrypts log/outbox file content produced by the Matica Printer Agent's own
++    /// <c>IFileEncryptionService</c>/<c>AesGcmFileEncryptionService</c> (Matica Print Flow,
++    /// file-encryption phase). Deliberately the exact same format and algorithm, not a
++    /// second implementation — this exists specifically so the Inventory API can read what the
++    /// Printer Agent wrote, not to encrypt anything of its own; the Inventory API never writes a
++    /// Printer Agent log or outbox file, only reads and decrypts one on a Super Admin's behalf.
++    /// </summary>
++    public interface IPrintAgentFileDecryptionService
++    {
++        /// <summary>
++        /// Decrypts a string in the Printer Agent's <c>v1.{nonce}.{tag}.{ciphertext}</c> format.
++        /// </summary>
++        /// <exception cref="PrintAgentFileFormatException">
++        /// <paramref name="encoded"/> is not in the expected format at all (wrong version marker,
++        /// wrong segment count, invalid base64) — this string was never produced by the Printer
++        /// Agent's encryption service, as opposed to being produced by it and then corrupted.
++        /// </exception>
++        /// <exception cref="System.Security.Cryptography.CryptographicException">
++        /// <paramref name="encoded"/> has the right shape but fails AES-GCM's authentication tag
++        /// check — a tampered or corrupted file, not a format problem.
++        /// </exception>
++        string Decrypt(string encoded);
++
++        /// <summary>
++        /// True if <paramref name="value"/> looks like the Printer Agent's encoded format (right
++        /// version marker, right segment count) — a cheap, non-throwing shape check, not a
++        /// guarantee that <see cref="Decrypt"/> will succeed (the authentication tag can still
++        /// fail even when the shape looks right).
++        /// </summary>
++        bool LooksEncrypted(string value);
++    }
++
++    /// <summary><paramref name="value"/> is not in the Printer Agent's encoded file format at all.</summary>
++    public sealed class PrintAgentFileFormatException : System.Exception
++    {
++        public PrintAgentFileFormatException(string message) : base(message) { }
++        public PrintAgentFileFormatException(string message, System.Exception innerException) : base(message, innerException) { }
++    }
++}
+diff --git a/ApplicationLayer/Options/FileEncryptionOptions.cs b/ApplicationLayer/Options/FileEncryptionOptions.cs
+new file mode 100644
+index 0000000..e5240a9
+--- /dev/null
++++ b/ApplicationLayer/Options/FileEncryptionOptions.cs
+@@ -0,0 +1,29 @@
++namespace ApplicationLayer.Options
++{
++    /// <summary>
++    /// Settings for decrypting log/outbox files produced by the Matica Printer Agent (Matica Print
++    /// Flow, Super-Admin decryption phase), bound from the <c>"FileEncryption"</c> section.
++    /// <para>
++    /// This key must be byte-for-byte identical to the Printer Agent's own
++    /// <c>FileEncryption:Key</c> — it is a matched pair, the same relationship
++    /// <c>PrintAgentTokenOptions.SigningKey</c> already has with the Printer Agent's
++    /// <c>PrintAgentAuth:SigningKey</c>. Explicitly not <see cref="JwtOptions.SigningKey"/> and not
++    /// derived from it: this key can only ever decrypt log/outbox file content, nothing about a
++    /// session or a token, so sharing it with the Printer Agent (which already holds it, by
++    /// necessity, to encrypt its own files) does not expand what a compromised branch machine
++    /// could do beyond what it can already do to its own files.
++    /// </para>
++    /// </summary>
++    public sealed class FileEncryptionOptions
++    {
++        /// <summary>Configuration section name these options bind from.</summary>
++        public const string SectionName = "FileEncryption";
++
++        /// <summary>
++        /// Base64-encoded AES-256 key (32 raw bytes once decoded) — must match the Printer Agent's
++        /// own <c>FileEncryption:Key</c> exactly. Supplied via user-secrets (development) or an
++        /// environment variable (production); never committed to <c>appsettings.json</c>.
++        /// </summary>
++        public string Key { get; set; } = string.Empty;
++    }
++}
+diff --git a/InfrastructureLayer/InfrastructureServiceRegistration.cs b/InfrastructureLayer/InfrastructureServiceRegistration.cs
+index c3d3508..ef91b02 100644
+--- a/InfrastructureLayer/InfrastructureServiceRegistration.cs
++++ b/InfrastructureLayer/InfrastructureServiceRegistration.cs
+@@ -57,6 +57,22 @@ namespace InfrastructureLayer
+             services.Configure<PrintAgentTokenOptions>(configuration.GetSection(PrintAgentTokenOptions.SectionName));
+             services.AddScoped<IPrintAgentTokenGenerator, PrintAgentTokenGenerator>();
+ 
++            // Matica Print Flow, Super-Admin decryption phase: the matched-pair key that lets this
++            // API decrypt log/outbox files the Printer Agent already encrypted - see
++            // FileEncryptionOptions's own doc comment for why sharing this specific key (as
++            // opposed to the shared Jwt:SigningKey) does not expand a compromised branch machine's
++            // capabilities.
++            services.AddOptions<FileEncryptionOptions>()
++                .Bind(configuration.GetSection(FileEncryptionOptions.SectionName))
++                .Validate(o => !string.IsNullOrWhiteSpace(o.Key), "FileEncryption Key is required.")
++                .Validate(o =>
++                {
++                    try { return Convert.FromBase64String(o.Key).Length == 32; }
++                    catch (FormatException) { return false; }
++                }, "FileEncryption Key must be base64-encoded and decode to exactly 32 bytes (AES-256).")
++                .ValidateOnStart();
++            services.AddScoped<IPrintAgentFileDecryptionService, AesGcmPrintAgentFileDecryptionService>();
++
+             // Matica Print Flow, reconciliation-credential phase: a third dedicated key, same
+             // fail-fast pattern, for the background reconciliation job's service token — never the
+             // same value as either the shared JWT key or the print-agent-token key.
+diff --git a/InfrastructureLayer/Security/AesGcmPrintAgentFileDecryptionService.cs b/InfrastructureLayer/Security/AesGcmPrintAgentFileDecryptionService.cs
+new file mode 100644
+index 0000000..90d61ac
+--- /dev/null
++++ b/InfrastructureLayer/Security/AesGcmPrintAgentFileDecryptionService.cs
+@@ -0,0 +1,81 @@
++using System;
++using System.Security.Cryptography;
++using System.Text;
++using ApplicationLayer.Contracts;
++using ApplicationLayer.Options;
++using Microsoft.Extensions.Options;
++
++namespace InfrastructureLayer.Security
++{
++    /// <summary>
++    /// Decrypt-only counterpart to the Matica Printer Agent's own
++    /// <c>AesGcmFileEncryptionService</c> — same format, same algorithm, same field order,
++    /// deliberately not reimplemented independently. Format:
++    /// <code>v1.{base64 nonce}.{base64 tag}.{base64 ciphertext}</code>
++    /// AES-256-GCM, 12-byte nonce, 16-byte authentication tag — matching the Printer Agent's own
++    /// constants exactly. No <c>Encrypt</c> method: the Inventory API never writes a Printer
++    /// Agent file, it only ever reads and decrypts one that the Printer Agent already wrote, on a
++    /// Super Admin's behalf — an encrypt method here would be dead code with no real caller.
++    /// </summary>
++    public sealed class AesGcmPrintAgentFileDecryptionService : IPrintAgentFileDecryptionService
++    {
++        private const string VersionMarker = "v1";
++        private const int TagSizeBytes = 16;
++
++        private readonly byte[] _key;
++
++        /// <summary>Creates the service from its configured key.</summary>
++        public AesGcmPrintAgentFileDecryptionService(IOptions<FileEncryptionOptions> options)
++        {
++            _key = Convert.FromBase64String(options.Value.Key);
++        }
++
++        /// <inheritdoc />
++        public string Decrypt(string encoded)
++        {
++            string[] segments = encoded.Split('.');
++            if (segments.Length != 4 || segments[0] != VersionMarker)
++            {
++                throw new PrintAgentFileFormatException(
++                    $"Value is not in the expected '{VersionMarker}.<nonce>.<tag>.<ciphertext>' format.");
++            }
++
++            byte[] nonce, tag, ciphertext;
++            try
++            {
++                nonce = Convert.FromBase64String(segments[1]);
++                tag = Convert.FromBase64String(segments[2]);
++                ciphertext = Convert.FromBase64String(segments[3]);
++            }
++            catch (FormatException ex)
++            {
++                throw new PrintAgentFileFormatException("One or more segments are not valid base64.", ex);
++            }
++
++            byte[] plaintextBytes = new byte[ciphertext.Length];
++            using (var aesGcm = new AesGcm(_key, TagSizeBytes))
++            {
++                // Throws CryptographicException on tag mismatch - tampered or corrupted data.
++                // Deliberately not caught here, same reasoning as the Printer Agent's own service:
++                // PrintAgentFileFormatException (wrong shape) and CryptographicException (right
++                // shape, failed the tag check) are different failure categories the Super Admin
++                // endpoint needs to report differently.
++                aesGcm.Decrypt(nonce, ciphertext, tag, plaintextBytes);
++            }
++
++            return Encoding.UTF8.GetString(plaintextBytes);
++        }
++
++        /// <inheritdoc />
++        public bool LooksEncrypted(string value)
++        {
++            if (string.IsNullOrEmpty(value))
++            {
++                return false;
++            }
++
++            string[] segments = value.Split('.');
++            return segments.Length == 4 && segments[0] == VersionMarker;
++        }
++    }
++}
+diff --git a/InventoryManagmentAndInstanceIssuancePresentationLayer/appsettings.json b/InventoryManagmentAndInstanceIssuancePresentationLayer/appsettings.json
+index 19f74c1..b9fc6cc 100644
+--- a/InventoryManagmentAndInstanceIssuancePresentationLayer/appsettings.json
++++ b/InventoryManagmentAndInstanceIssuancePresentationLayer/appsettings.json
+@@ -21,6 +21,9 @@
+     "SigningKey": "",
+     "AccessTokenMinutes": 5
+   },
++  "FileEncryption": {
++    "Key": ""
++  },
+   "CardFile": {
+     "MaxCardsPerRequest": 50000
+   },
+-- 
+2.43.0
+

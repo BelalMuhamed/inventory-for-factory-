@@ -1,0 +1,56 @@
+From 0daa3d3feb588871e54ff63050b063b4c9033644 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Sun, 23 Aug 2026 11:55:14 +0000
+Subject: [PATCH] Fix Hangfire recurring job registration: use
+ IRecurringJobManager, not the static RecurringJob helper
+
+Real bug, not a config issue. RecurringJob.AddOrUpdate<T>(...) is
+Hangfire's legacy static-API convenience, and it depends on the global
+JobStorage.Current being set. builder.Services.AddHangfire(config =>
+config.UseMemoryStorage()) only configures Hangfire's DI-based services -
+it never assigns that legacy global, which is exactly what "Current
+JobStorage instance has not been initialized yet" means. The static call
+was also failing purely because of *when* it ran: it executes before
+app.RunAsync() starts the hosted services AddHangfireServer() registers,
+so even if something else set the global later, it wouldn't have been
+set yet at this point in Main either way.
+
+Fixed by resolving IRecurringJobManager from the same service provider
+AddHangfire(...) populated (app.Services.GetRequiredService<IRecurringJobManager>())
+and calling AddOrUpdate on that instance instead of the static class -
+this uses the storage that was actually configured, with no dependency
+on a global assignment or hosted-service startup ordering. Exactly what
+the exception's own message recommends.
+
+No dotnet SDK in the authoring environment. Verified by brace balance
+and a targeted check that IRecurringJobManager is the only new symbol
+introduced, already covered by the existing 'using Hangfire;' (confirmed
+via the exception's own stack trace, which shows Hangfire.RecurringJobManager
+implementing this interface in the same root Hangfire namespace).
+---
+ invetoryBackGroundServices/Program.cs | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/invetoryBackGroundServices/Program.cs b/invetoryBackGroundServices/Program.cs
+index 62459a5..0028030 100644
+--- a/invetoryBackGroundServices/Program.cs
++++ b/invetoryBackGroundServices/Program.cs
+@@ -285,7 +285,14 @@ namespace invetoryBackGroundServices
+                 await startupJob.RunAsync();
+             }
+ 
+-            RecurringJob.AddOrUpdate<OutboxReconciliationJob>(
++            // The static RecurringJob.AddOrUpdate helper relies on the legacy global
++            // JobStorage.Current, which AddHangfire(...)'s DI-based registration never sets -
++            // that mismatch is exactly what "Current JobStorage instance has not been
++            // initialized yet" means. IRecurringJobManager, resolved from the same service
++            // provider AddHangfire populated, uses the storage that was actually configured
++            // instead of a global that nothing here ever assigns.
++            IRecurringJobManager recurringJobManager = app.Services.GetRequiredService<IRecurringJobManager>();
++            recurringJobManager.AddOrUpdate<OutboxReconciliationJob>(
+                 "outbox-reconciliation", job => job.RunAsync(CancellationToken.None), Cron.MinuteInterval(30));
+ 
+             await app.RunAsync();
+-- 
+2.43.0
+

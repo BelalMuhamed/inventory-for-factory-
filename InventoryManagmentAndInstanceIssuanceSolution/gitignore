@@ -1,0 +1,98 @@
+## ============================================================
+##  .gitignore — Inventory Management & Instance Issuance
+##  .NET 8 / ASP.NET Core / EF Core / Visual Studio
+## ============================================================
+
+## --- Build output ---------------------------------------------------------
+## Covers bin/ and obj/ in every project (Domain, Application, Infrastructure, Presentation).
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+[Ll]og/
+[Ll]ogs/
+
+## --- Visual Studio / Rider / VS Code --------------------------------------
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+*_i.c
+*_p.c
+*.rsp
+
+## --- Build / test results -------------------------------------------------
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+TestResults/
+[Tt]est[Rr]esult*/
+*.trx
+*.coverage
+*.coveragexml
+coverage*.json
+coverage*.xml
+coverage*.info
+
+## --- NuGet ----------------------------------------------------------------
+*.nupkg
+*.snupkg
+**/packages/*
+!**/packages/build/
+*.nuget.props
+*.nuget.targets
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+## ============================================================
+##  CONFIGURATION & SECRETS
+##  Commit appsettings.json (shared config). Ignore secrets and
+##  per-developer/per-environment overrides ONLY.
+## ============================================================
+## Ignore local/secret overrides:
+appsettings.*.local.json
+appsettings.Local.json
+appsettings.Development.local.json
+*.secrets.json
+secrets.json
+
+## Do NOT ignore committed config (explicit un-ignore for safety):
+!appsettings.json
+!appsettings.Development.json
+!appsettings.Production.json
+
+## launchSettings is developer-specific (ports, env vars) — usually not committed:
+**/Properties/launchSettings.json
+
+## --- EF Core --------------------------------------------------------------
+## IMPORTANT: Migrations are SOURCE CODE, not build artifacts. They are
+## intentionally NOT ignored — CI/CD and teammates need them to apply the
+## schema deterministically. Their compiled output is already covered by
+## the bin/ and obj/ rules above. Do not add a "Migrations/" rule here.
+
+## --- ASP.NET Core ---------------------------------------------------------
+**/wwwroot/dist/
+**/wwwroot/lib/
+node_modules/
+*.pfx
+*.key
+*.pem
+
+## --- OS noise -------------------------------------------------------------
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+## --- Misc -----------------------------------------------------------------
+*.log
+*.tmp
+*.cache
+*.bak

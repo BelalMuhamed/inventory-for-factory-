@@ -1,0 +1,101 @@
+From 98001669699ab8ab35e5d6a767ccfcdf161891aa Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Tue, 25 Aug 2026 06:52:16 +0000
+Subject: [PATCH] Phase 3: printing request records TenantId, derived from the
+ token, not a caller-supplied UserName
+
+Per clarification: "UserId" resolves to TenantId - there's no separate
+User entity in the Inventory API's domain model (confirmed by grep
+before this was answered, in the prior design review), so TenantId is
+what this system actually has to represent "who."
+
+Implementation choice, explained rather than picked silently: the Print
+Agent token already carries a tenantId claim (PrintAgentClaims.TenantId),
+the same way it carries branchId. Rather than add a new caller-supplied
+field to PrintReqDto for Angular to populate - a value that could in
+principle disagree with what the token actually says - TenantId is
+derived server-side from the authenticated token instead, via a new
+GetTenantId() helper deliberately styled to match the existing
+IsOutsideTokenScope helper right next to it (same file, same
+authenticated-claim-over-caller-supplied-value reasoning already
+applied to BranchId).
+
+Params/PrintReqDto.cs: UserName removed entirely - confirmed by grep
+that its only use anywhere in the codebase was the local batch line
+this phase now sources from the token instead, so there was nothing
+else to preserve or migrate. Not a breaking change for existing Angular
+callers still sending userName in the request body: ASP.NET Core's
+default JSON model binding silently ignores unknown properties rather
+than erroring, so a caller that hasn't been updated yet keeps working,
+it just stops having any effect - which is the same posture the
+Frontend-out-of-scope instruction already established for this task.
+
+Controllers/MachineController.cs: new GetTenantId() private helper;
+the local batch line's UserName field now uses this instead of
+dto.UserName.
+
+Verified by: a repo-wide grep confirming zero remaining references to
+the removed field anywhere; brace balance across both touched files;
+and the full-repo symbol-table cross-check (same four already-known
+false positives, nothing new). No dotnet SDK in the authoring
+environment - please build locally before merging.
+---
+ .../Controllers/MachineController.cs                 | 12 +++++++++++-
+ invetoryBackGroundServices/Params/PrintReqDto.cs     |  7 ++++++-
+ 2 files changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/invetoryBackGroundServices/Controllers/MachineController.cs b/invetoryBackGroundServices/Controllers/MachineController.cs
+index 30b37cf..ad153dd 100644
+--- a/invetoryBackGroundServices/Controllers/MachineController.cs
++++ b/invetoryBackGroundServices/Controllers/MachineController.cs
+@@ -72,6 +72,16 @@ namespace invetoryBackGroundServices.Controllers
+         private bool IsOutsideTokenScope(long requestedBranchId) =>
+             User.FindFirstValue(PrintAgentClaims.BranchId) != requestedBranchId.ToString();
+ 
++        /// <summary>
++        /// The identifier recorded on the local batch line for who a card was printed under. This
++        /// used to be a caller-supplied <c>UserName</c> field on <see cref="Params.PrintReqDto"/>;
++        /// now it's the tenant id already carried on the authenticated Print Agent token, the same
++        /// authenticated-claim-over-caller-supplied-value reasoning already applied to
++        /// <see cref="IsOutsideTokenScope"/>. Never null in practice - <c>[Authorize]</c> has
++        /// already required a valid token with this claim before any action body runs.
++        /// </summary>
++        private string GetTenantId() => User.FindFirstValue(PrintAgentClaims.TenantId) ?? string.Empty;
++
+         /// <summary>
+         /// Reads machine status. Returns the parsed status object inside the standard envelope
+         /// rather than the machine's raw JSON text, which is what the previous version returned
+@@ -288,7 +298,7 @@ namespace invetoryBackGroundServices.Controllers
+                 string lineValue = $"{maskedPan}|" +
+                     $"{dto.CardHolderName.Trim()}|" +
+                     $"{dto.BranchId}|" +
+-                    $"{dto.UserName}|{(printSucceeded ? 1 : 3)}|" +
++                    $"{GetTenantId()}|{(printSucceeded ? 1 : 3)}|" +
+                     $"{(printSucceeded ? "Print Card Success" : "Error in Print Card")}|" +
+                     $"{dto.ProductId}";
+                 string lineValueCipher = ENCRYPTION.Enc_TripleDES(out ERROR, lineValue, GLOBALS._KEY_CONFIG);
+diff --git a/invetoryBackGroundServices/Params/PrintReqDto.cs b/invetoryBackGroundServices/Params/PrintReqDto.cs
+index edd0943..2c49f5e 100644
+--- a/invetoryBackGroundServices/Params/PrintReqDto.cs
++++ b/invetoryBackGroundServices/Params/PrintReqDto.cs
+@@ -15,11 +15,16 @@
+     /// <see cref="OffsetY"/>) are supplied directly instead of being looked up by this service -
+     /// Angular already fetches them from the Inventory API's own
+     /// <c>GET /api/products/{id}/print-config</c> as part of normal product browsing.
++    /// <c>UserName</c> is gone too, for the same reason <c>token</c> is: the identifier now
++    /// recorded for the local batch line is the caller's tenant id, and that's already an
++    /// authenticated claim on the Print Agent token itself (<c>PrintAgentClaims.TenantId</c>) -
++    /// no reason to also accept it as a caller-supplied request field that could disagree with
++    /// what the token actually says, the same reasoning already applied to <see cref="BranchId"/>
++    /// via <c>IsOutsideTokenScope</c>.
+     /// </summary>
+     public class PrintReqDto
+     {
+         public required string CardHolderName { get; set; }
+-        public string? UserName { get; set; }
+         public required string MachineIp { get; set; }
+         public required string Port { get; set; }
+         public required int FeederId { get; set; }
+-- 
+2.43.0
+
